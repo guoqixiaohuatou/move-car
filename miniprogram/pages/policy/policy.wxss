@@ -1,0 +1,123 @@
+.policy__head {
+  padding: 16rpx 32rpx 24rpx;
+}
+
+.policy__title {
+  font-size: 44rpx;
+  font-weight: 700;
+  color: var(--text-1);
+}
+
+.policy__meta {
+  font-size: 24rpx;
+  margin-top: 8rpx;
+}
+
+.policy__intro {
+  font-size: 26rpx;
+  color: var(--text-2);
+  line-height: 1.8;
+  background: #f6f9ff;
+  border: none;
+}
+
+.sec__title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--text-1);
+  margin-bottom: 18rpx;
+}
+
+.sec__sub {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: var(--brand-dark);
+  margin: 20rpx 0 12rpx;
+}
+
+.sec__note {
+  font-size: 24rpx;
+  color: var(--text-2);
+  line-height: 1.75;
+  background: #fffbe6;
+  border: 2rpx solid #ffe58f;
+  border-radius: 12rpx;
+  padding: 18rpx 20rpx;
+  margin-top: 24rpx;
+}
+
+.para {
+  font-size: 26rpx;
+  color: var(--text-2);
+  line-height: 1.8;
+  margin-bottom: 14rpx;
+}
+
+.para:last-child {
+  margin-bottom: 0;
+}
+
+.strong {
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.t-ok {
+  color: #52c41a;
+}
+
+/* 三列表格：信息 / 是否必填 / 用途 */
+.tbl {
+  border: 2rpx solid var(--line);
+  border-radius: 12rpx;
+  overflow: hidden;
+}
+
+.tbl__row {
+  display: flex;
+  align-items: flex-start;
+  font-size: 23rpx;
+  color: var(--text-2);
+  border-bottom: 2rpx solid var(--line);
+  padding: 16rpx 18rpx;
+  line-height: 1.6;
+}
+
+.tbl__row:last-child {
+  border-bottom: none;
+}
+
+.tbl__row--head {
+  background: #f6f9ff;
+  color: var(--text-1);
+  font-weight: 600;
+  font-size: 24rpx;
+}
+
+.tbl__c1 {
+  width: 26%;
+  flex-shrink: 0;
+  padding-right: 12rpx;
+}
+
+.tbl__c2 {
+  width: 20%;
+  flex-shrink: 0;
+  padding-right: 12rpx;
+}
+
+.tbl__c3 {
+  flex: 1;
+  color: var(--text-3);
+}
+
+.tbl__row--head .tbl__c3 {
+  color: var(--text-1);
+}
+
+.policy__foot {
+  font-size: 22rpx;
+  line-height: 1.8;
+  padding: 8rpx 32rpx 48rpx;
+  text-align: center;
+}

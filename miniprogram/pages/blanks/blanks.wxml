@@ -1,0 +1,56 @@
+<view class="page">
+  <!-- 顶部说明 -->
+  <view class="card card--flat tip">
+    <view class="tip__title">📇 共 {{items.length}} 张空白挪车码</view>
+    <view class="tip__text">
+      点击单张码可放大、长按转发。点「全部保存到相册」可一键存到手机再去打印。
+    </view>
+    <view class="tip__warn">
+      ⚠️ 空白码「先到先得」：谁先扫码绑定，这张码就归谁。
+      请确认贴纸交到对方手上后再让对方扫码。
+    </view>
+  </view>
+
+  <!-- 批量保存 -->
+  <button
+    class="btn btn--primary btn--lg btn--block save-all"
+    disabled="{{savingAll}}"
+    bindtap="onSaveAll"
+  >
+    {{savingAll ? '保存中…' : '全部保存到相册'}}
+  </button>
+
+  <!-- 码网格 -->
+  <view class="grid">
+    <view class="card blank-card" wx:for="{{items}}" wx:key="codeId" wx:for-item="it">
+      <view class="blank-card__head">
+        <view class="blank-card__no">#{{it.index}}</view>
+        <view class="blank-card__hint t-mute">空白 · 待绑定</view>
+      </view>
+
+      <view class="qr-box" data-idx="{{index}}" bindtap="onPreview">
+        <image
+          class="qr-box__img"
+          src="{{it.fileID}}"
+          mode="aspectFit"
+          show-menu-by-longpress="{{true}}"
+          wx:if="{{it.fileID}}"
+        />
+        <view class="qr-box--loading" wx:else>
+          <text class="t-mute">图片生成中…</text>
+        </view>
+      </view>
+
+      <view class="qr-card__hint t-mute">长按可转发 · 点击放大</view>
+
+      <view class="blank-card__id t-mono">{{it.codeId}}</view>
+      <view class="blank-card__actions">
+        <button class="btn btn--ghost btn--sm" data-id="{{it.codeId}}" bindtap="onCopy">
+          复制 ID
+        </button>
+      </view>
+    </view>
+  </view>
+
+  <view class="foot-link t-mute" bindtap="goHome">我也要绑定自己的车辆 →</view>
+</view>

@@ -1,0 +1,225 @@
+/* ============ 设计系统 ============ */
+page {
+  --brand: #1677ff;
+  --brand-dark: #0958d9;
+  --brand-light: #e8f2ff;
+  --danger: #ff4d4f;
+  --success: #52c41a;
+  --warning: #fa8c16;
+
+  --text-1: #1a1a1a;
+  --text-2: #5c6470;
+  --text-3: #98a1ad;
+  --line: #ebedf0;
+  --bg: #f2f4f8;
+  --card: #ffffff;
+
+  background: var(--bg);
+  color: var(--text-1);
+  font-size: 28rpx;
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', Helvetica, sans-serif;
+  line-height: 1.6;
+}
+
+/* ============ 布局 ============ */
+.page {
+  min-height: 100vh;
+  padding: 24rpx 24rpx calc(48rpx + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+}
+
+.page--center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.card {
+  background: var(--card);
+  border-radius: 24rpx;
+  padding: 32rpx;
+  margin-bottom: 24rpx;
+  box-shadow: 0 2rpx 16rpx rgba(24, 46, 84, 0.06);
+}
+
+.card--flat {
+  box-shadow: none;
+  border: 2rpx solid var(--line);
+}
+
+/* ============ 文字 ============ */
+.t-title {
+  font-size: 40rpx;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.t-sub {
+  font-size: 26rpx;
+  color: var(--text-2);
+}
+
+.t-mute {
+  font-size: 24rpx;
+  color: var(--text-3);
+}
+
+.t-brand {
+  color: var(--brand);
+}
+
+.t-danger {
+  color: var(--danger);
+}
+
+.t-mono {
+  font-family: 'SF Mono', 'Roboto Mono', Menlo, Consolas, monospace;
+  letter-spacing: 2rpx;
+}
+
+/* ============ 按钮 ============ */
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 96rpx;
+  border-radius: 48rpx;
+  font-size: 32rpx;
+  font-weight: 500;
+  line-height: 1;
+  transition: opacity 0.15s, transform 0.1s;
+  border: none;
+}
+
+.btn::after {
+  border: none;
+}
+
+.btn:active {
+  opacity: 0.82;
+  transform: scale(0.99);
+}
+
+.btn--primary {
+  background: linear-gradient(135deg, #3c8dff, #1677ff);
+  color: #ffffff;
+  box-shadow: 0 8rpx 24rpx rgba(22, 119, 255, 0.28);
+}
+
+.btn--outline {
+  background: #ffffff;
+  color: var(--brand);
+  border: 2rpx solid var(--brand);
+}
+
+.btn--ghost {
+  background: #ffffff;
+  color: var(--text-2);
+  border: 2rpx solid var(--line);
+}
+
+.btn--danger {
+  background: #fff1f0;
+  color: var(--danger);
+  border: 2rpx solid #ffccc7;
+}
+
+.btn--block {
+  width: 100%;
+}
+
+.btn--lg {
+  height: 112rpx;
+  border-radius: 56rpx;
+  font-size: 34rpx;
+}
+
+.btn[disabled] {
+  opacity: 0.5;
+  box-shadow: none;
+}
+
+.btn-group {
+  display: flex;
+  gap: 20rpx;
+  margin-top: 32rpx;
+}
+
+.btn-group > .btn {
+  flex: 1;
+}
+
+/* ============ 空状态 ============ */
+.empty {
+  padding: 120rpx 40rpx;
+  text-align: center;
+}
+
+.empty__icon {
+  font-size: 96rpx;
+  line-height: 1;
+  margin-bottom: 24rpx;
+}
+
+.empty__title {
+  font-size: 32rpx;
+  color: var(--text-2);
+  margin-bottom: 12rpx;
+}
+
+.empty__desc {
+  font-size: 26rpx;
+  color: var(--text-3);
+  margin-bottom: 40rpx;
+}
+
+/* ============ 标签 ============ */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4rpx 16rpx;
+  border-radius: 8rpx;
+  font-size: 22rpx;
+  line-height: 1.8;
+}
+
+.tag--on {
+  background: #e8f8e3;
+  color: #389e0d;
+}
+
+.tag--off {
+  background: #f2f3f5;
+  color: #98a1ad;
+}
+
+/* ============ 列表行 ============ */
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24rpx 0;
+  border-bottom: 2rpx solid var(--line);
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.row__label {
+  color: var(--text-2);
+  font-size: 28rpx;
+  flex-shrink: 0;
+}
+
+.row__value {
+  color: var(--text-1);
+  font-size: 28rpx;
+  text-align: right;
+  word-break: break-all;
+}
+
+/* ============ 安全区 ============ */
+.safe-bottom {
+  height: env(safe-area-inset-bottom);
+}

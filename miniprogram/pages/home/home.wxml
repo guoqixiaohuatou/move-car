@@ -1,0 +1,210 @@
+<view class="page">
+  <!-- 模板未就绪提示（微信通知用；拨号功能不受影响） -->
+  <view class="card card--flat tpl-warn" wx:if="{{tplReady === false}}" bindtap="onTplWarnTap">
+    <view class="tpl-warn__title">⚠️ 微信通知暂不可用</view>
+    <view class="tpl-warn__text">
+      {{tplHint || '尚未选用订阅消息模板，扫码方只能拨打电话联系你。点击查看如何启用。'}}
+    </view>
+  </view>
+
+  <!-- 加载中 -->
+  <view class="empty" wx:if="{{loading}}">
+    <view class="empty__icon">⏳</view>
+    <view class="empty__title">加载中…</view>
+  </view>
+
+  <!-- 空状态：引导车主先填手机号 -->
+  <view class="empty" wx:elif="{{cars.length === 0}}">
+    <view class="empty__icon">🚗</view>
+    <view class="empty__title">3 步生成你的挪车码</view>
+    <view class="empty__desc">别人扫你车上的码，就能微信通知你或直接拨号</view>
+
+    <view class="steps">
+      <view class="step">
+        <view class="step__no">1</view>
+        <view class="step__body">
+          <view class="step__title">输入手机号</view>
+          <view class="step__desc">填车牌号 + 你能接到的手机号</view>
+        </view>
+      </view>
+      <view class="step">
+        <view class="step__no">2</view>
+        <view class="step__body">
+          <view class="step__title">生成挪车码</view>
+          <view class="step__desc">自动生成专属二维码，保存到相册</view>
+        </view>
+      </view>
+      <view class="step">
+        <view class="step__no">3</view>
+        <view class="step__body">
+          <view class="step__title">打印贴车上</view>
+          <view class="step__desc">打印后贴在前挡风玻璃内侧左下角</view>
+        </view>
+      </view>
+    </view>
+
+    <button class="btn btn--primary btn--lg start-btn" bindtap="goEdit">
+      开始：输入手机号
+    </button>
+
+    <view class="blank-entry t-mute" bindtap="onBlankTap" wx:if="{{isAdmin}}">
+      或者，先生成一张空白挪车码（以后再绑定车辆）→
+    </view>
+  </view>
+
+  <!-- 已有车辆 -->
+  <block wx:else>
+    <view class="card card--flat banner">
+      <view class="banner__title">🅿️ 挪车助手</view>
+      <view class="banner__desc">
+        把挪车码打印后贴在挡风玻璃内侧。他人扫码即可通过微信通知你，或直接拨号联系你。
+      </view>
+    </view>
+
+    <!-- 运行模式：体验版 / 正式版（手机上点一下即切，无需改代码） -->
+    <view class="card card--flat runmode">
+      <view class="runmode__row">
+        <view class="runmode__text">
+          <view class="runmode__title">运行模式</view>
+          <view class="runmode__desc">
+            {{isRelease ? '正式版：任何微信用户都能扫开' : '体验版：仅体验成员能扫开'}}
+          </view>
+        </view>
+        <switch
+          class="runmode__switch"
+          checked="{{isRelease}}"
+          disabled="{{runModeLoading}}"
+          color="#1677FF"
+          bindchange="onRunModeChange"
+        />
+      </view>
+      <view class="runmode__hint" wx:if="{{isRelease}}">
+        ⚠️ 切到正式版前，请确认小程序已完成 ICP 备案并正式发布，否则路人仍扫不开。
+      </view>
+      <view class="runmode__hint runmode__hint--mute" wx:else>
+        调试阶段用体验版即可；正式对路人开放时再切到正式版。
+      </view>
+    </view>
+
+    <block wx:for="{{cars}}" wx:key="codeId">
+      <!-- 空白码：等待绑定车辆 -->
+      <view class="card car car--blank" wx:if="{{item.isBlank}}">
+        <view class="car__head">
+          <view class="car__plate car__plate--blank">空白挪车码</view>
+          <view class="tag tag--wait">待绑定</view>
+        </view>
+
+        <view class="blank__desc">
+          这张码还没绑定车辆。把码打印贴到车上后，扫码填写车牌即可完成绑定。
+        </view>
+
+        <view class="btn-group">
+          <button class="btn btn--primary" data-id="{{item.codeId}}" bindtap="onCodeTap">
+            查看挪车码
+          </button>
+          <button class="btn btn--ghost" data-id="{{item.codeId}}" bindtap="onBindTap">
+            绑定车辆
+          </button>
+        </view>
+
+        <view class="btn-group">
+          <button
+            class="btn btn--danger"
+            data-id="{{item.codeId}}"
+            data-blank="{{true}}"
+            bindtap="onDeleteTap"
+          >
+            删除这张空白码
+          </button>
+        </view>
+
+        <view class="t-mute quota-hint">
+          ⚠️ 先到先得：谁先扫码绑定，这张码就归谁。被别人绑定后它会从本页消失。
+        </view>
+      </view>
+
+      <!-- 已绑定车辆 -->
+      <view class="card car" wx:else>
+        <view class="car__head">
+          <view class="car__plate t-mono">{{item.plate}}</view>
+          <view class="tag {{item.enabled ? 'tag--on' : 'tag--off'}}">
+            {{item.enabled ? '通知开启' : '已暂停'}}
+          </view>
+        </view>
+
+        <view class="row">
+          <text class="row__label">联系电话</text>
+          <text class="row__value t-mono">{{item.phoneMask}}</text>
+        </view>
+        <view class="row" wx:if="{{item.carModel}}">
+          <text class="row__label">车辆备注</text>
+          <text class="row__value">{{item.carModel}}</text>
+        </view>
+        <view class="row" wx:if="{{tplReady}}">
+          <text class="row__label">可通知次数</text>
+          <text class="row__value {{item.quota > 0 ? 't-brand' : 't-danger'}}">
+            {{item.quota}} 次
+          </text>
+        </view>
+        <view class="row">
+          <text class="row__label">最近被通知</text>
+          <text class="row__value">{{item.lastNotifyText}}</text>
+        </view>
+
+        <view class="btn-group">
+          <button class="btn btn--primary" data-id="{{item.codeId}}" bindtap="onCodeTap">
+            查看挪车码
+          </button>
+          <button class="btn btn--ghost" data-id="{{item.codeId}}" bindtap="onLogsTap">
+            通知记录
+          </button>
+        </view>
+
+        <view class="btn-group">
+          <button class="btn btn--ghost" data-id="{{item.codeId}}" bindtap="onEditTap">
+            编辑
+          </button>
+          <button
+            class="btn btn--ghost"
+            data-id="{{item.codeId}}"
+            data-enabled="{{item.enabled}}"
+            bindtap="onToggleTap"
+          >
+            {{item.enabled ? '暂停' : '启用'}}
+          </button>
+          <button
+            class="btn btn--danger"
+            data-id="{{item.codeId}}"
+            data-plate="{{item.plate}}"
+            bindtap="onDeleteTap"
+          >
+            删除
+          </button>
+        </view>
+
+        <view class="t-mute quota-hint" wx:if="{{tplReady && item.quota === 0}}">
+          ⚠️ 通知次数已用完。多进入几次本小程序（授权弹窗勾选「总是保持以上选择」）即可自动累积次数。
+        </view>
+      </view>
+    </block>
+
+    <view class="btn-group">
+      <button class="btn btn--outline" bindtap="goEdit">+ 添加车辆</button>
+      <button class="btn btn--outline" bindtap="onBlankTap" wx:if="{{isAdmin}}">＋ 空白挪车码</button>
+    </view>
+
+    <!-- 管理员权限自助配置（认领 / 复制 openid） -->
+    <view class="admin-tools" wx:if="{{!loading}}">
+      <button wx:if="{{isAdmin}}" class="btn btn--ghost" bindtap="onCopyOpenid">复制我的 openid（空白码权限已配置）</button>
+      <button wx:if="{{!isAdmin && !hasAdmin}}" class="btn btn--ghost" bindtap="onClaimAdmin">认领管理员身份（解锁空白挪车码生成）</button>
+      <!-- 直接把 openid 显示出来：手机剪贴板粘不到电脑，长按这里可复制 -->
+      <view wx:if="{{isAdmin && myOpenid}}" class="admin-openid">
+        <text class="admin-openid__label">我的 openid（长按文字可复制）</text>
+        <text class="admin-openid__value" user-select>{{myOpenid}}</text>
+      </view>
+    </view>
+  </block>
+
+  <!-- 隐私政策入口：审核要求小程序内需提供「易于访问」的隐私政策 -->
+  <view class="policy-entry" wx:if="{{!loading}}" bindtap="goPolicy">隐私政策</view>
+</view>

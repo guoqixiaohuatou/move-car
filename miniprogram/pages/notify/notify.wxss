@@ -1,0 +1,224 @@
+/* 空白码：引导绑定 */
+.bind-card {
+  text-align: center;
+  padding: 56rpx 40rpx 48rpx;
+}
+
+.bind-card__icon {
+  font-size: 88rpx;
+  line-height: 1;
+  margin-bottom: 24rpx;
+}
+
+.bind-card__title {
+  font-size: 36rpx;
+  font-weight: 600;
+  color: var(--text-1);
+  margin-bottom: 16rpx;
+}
+
+.bind-card__desc {
+  font-size: 28rpx;
+  color: var(--text-2);
+  line-height: 1.7;
+  text-align: left;
+  margin-bottom: 40rpx;
+}
+
+.bind-card__tip {
+  margin-top: 24rpx;
+  font-size: 22rpx;
+  line-height: 1.7;
+  text-align: left;
+}
+
+.car-card {
+  text-align: center;
+  padding: 48rpx 32rpx;
+}
+
+.car-card__label {
+  font-size: 24rpx;
+  color: var(--text-3);
+  margin-bottom: 16rpx;
+}
+
+.car-card__plate {
+  font-size: 56rpx;
+  font-weight: 600;
+  letter-spacing: 6rpx;
+  line-height: 1.3;
+}
+
+.car-card__plate--blue {
+  color: #1677ff;
+}
+
+.car-card__plate--green {
+  color: #52c41a;
+}
+
+.car-card__tag {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 16rpx;
+  padding: 4rpx 16rpx;
+  border-radius: 8rpx;
+  font-size: 22rpx;
+  line-height: 1.6;
+}
+
+.car-card__tag--blue {
+  background: #e8f2ff;
+  color: #1677ff;
+}
+
+.car-card__tag--green {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.car-card__model {
+  margin-top: 16rpx;
+}
+
+/* 车主电话卡片 */
+.phone-card {
+  text-align: center;
+  padding: 32rpx;
+  background: linear-gradient(135deg, #f0f7ff 0%, #ffffff 100%);
+  border: 2rpx solid var(--brand-light);
+}
+
+.phone-card__label {
+  font-size: 24rpx;
+  color: var(--text-3);
+  margin-bottom: 8rpx;
+}
+
+.phone-card__number {
+  font-size: 52rpx;
+  font-weight: 600;
+  color: var(--text-1);
+  letter-spacing: 2rpx;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.phone-card__ops {
+  display: flex;
+  gap: 20rpx;
+  margin-top: 24rpx;
+}
+
+.phone-card__btn {
+  flex: 1;
+  height: 80rpx;
+  border-radius: 40rpx;
+  font-size: 28rpx;
+}
+
+.main-btn {
+  margin-top: 24rpx;
+  margin-bottom: 8rpx;
+}
+
+/* 车主未留手机号时的说明卡 */
+.no-phone {
+  background: #f6f9ff;
+  border: none;
+  padding: 28rpx 32rpx;
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.no-phone__icon {
+  font-size: 36rpx;
+  line-height: 1;
+}
+
+.no-phone__text {
+  flex: 1;
+  font-size: 25rpx;
+  color: var(--text-2);
+  line-height: 1.6;
+}
+
+.privacy-tip {
+  text-align: center;
+  margin-top: 16rpx;
+  margin-bottom: 32rpx;
+  line-height: 1.6;
+}
+
+.extra {
+  padding: 32rpx;
+}
+
+.extra__title {
+  font-size: 28rpx;
+  font-weight: 500;
+  color: var(--text-1);
+  margin-bottom: 20rpx;
+}
+
+.extra__title--sub {
+  margin-top: 36rpx;
+}
+
+.quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+  margin-bottom: 20rpx;
+}
+
+.quick__item {
+  padding: 12rpx 20rpx;
+  background: #f5f7fa;
+  border: 2rpx solid transparent;
+  border-radius: 32rpx;
+  font-size: 24rpx;
+  color: var(--text-2);
+}
+
+.quick__item--on {
+  background: var(--brand-light);
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.extra__textarea {
+  width: 100%;
+  min-height: 140rpx;
+  padding: 20rpx;
+  background: #f7f8fa;
+  border-radius: 16rpx;
+  font-size: 26rpx;
+  line-height: 1.6;
+  box-sizing: border-box;
+}
+
+.extra__ph {
+  color: var(--text-3);
+}
+
+.extra__count {
+  text-align: right;
+  margin-top: 8rpx;
+}
+
+.result {
+  background: #fffbe6;
+  border: none;
+}
+
+.result__text {
+  line-height: 1.7;
+}
+
+.foot-link {
+  text-align: center;
+  padding: 32rpx 0;
+}

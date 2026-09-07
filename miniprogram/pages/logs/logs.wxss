@@ -1,0 +1,30 @@
+.log {
+  padding: 12rpx 32rpx;
+}
+
+.log__row {
+  display: flex;
+  align-items: flex-start;
+  padding: 14rpx 0;
+  border-bottom: 2rpx solid #f0f1f3;
+}
+
+.log__row:last-child {
+  border-bottom: none;
+}
+
+.log__label {
+  flex: 0 0 140rpx;
+  font-size: 24rpx;
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+.log__value {
+  flex: 1;
+  min-width: 0;
+  font-size: 28rpx;
+  line-height: 1.6;
+  color: var(--text-1);
+  word-break: break-all;
+}

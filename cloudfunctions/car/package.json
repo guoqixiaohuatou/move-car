@@ -1,0 +1,9 @@
+{
+  "name": "car",
+  "version": "1.0.0",
+  "description": "挪车助手 - 业务云函数（车辆 / 通知 / 小程序码）",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  }
+}

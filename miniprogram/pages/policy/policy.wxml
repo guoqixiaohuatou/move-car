@@ -1,0 +1,197 @@
+<view class="page policy">
+  <view class="policy__head">
+    <view class="policy__title">隐私政策</view>
+    <view class="policy__meta t-mute">生效日期 {{effectiveDate}} · 版本 v{{version}}</view>
+  </view>
+
+  <view class="card policy__intro">
+    本小程序由个人开发者开发运营，仅提供「扫码联系车主挪车」服务。
+    本政策说明我们收集哪些信息、为什么收集、存多久，以及你可以如何管理它们。
+  </view>
+
+  <view class="card">
+    <view class="sec__title">一、我们收集哪些信息</view>
+
+    <view class="sec__sub">1. 车主（生成挪车码的人）提供</view>
+    <view class="tbl">
+      <view class="tbl__row tbl__row--head">
+        <view class="tbl__c1">信息</view>
+        <view class="tbl__c2">是否必填</view>
+        <view class="tbl__c3">用途</view>
+      </view>
+      <view class="tbl__row">
+        <view class="tbl__c1">车牌号</view>
+        <view class="tbl__c2">必填</view>
+        <view class="tbl__c3">生成挪车码，向扫码方展示完整车牌以确认车辆（挪车场景需对方核对车辆，故车牌不做脱敏）</view>
+      </view>
+      <view class="tbl__row">
+        <view class="tbl__c1">手机号</view>
+        <view class="tbl__c2 t-ok">选填</view>
+        <view class="tbl__c3">扫码方一键拨打联系车主。不填则只能通过微信通知联系</view>
+      </view>
+      <view class="tbl__row">
+        <view class="tbl__c1">车辆备注</view>
+        <view class="tbl__c2 t-ok">选填</view>
+        <view class="tbl__c3">展示给扫码方，帮助确认车辆（如「白色 SUV」）</view>
+      </view>
+      <view class="tbl__row">
+        <view class="tbl__c1">相册（保存到相册）</view>
+        <view class="tbl__c2 t-ok">授权</view>
+        <view class="tbl__c3">车主将挪车码图片保存到自己手机相册时，需你授权「保存到相册」；我们仅写入这张图，不会读取你的相册</view>
+      </view>
+      <view class="tbl__row">
+        <view class="tbl__c1">剪切板</view>
+        <view class="tbl__c2 t-ok">授权</view>
+        <view class="tbl__c3">复制挪车码 ID、本人 openid 等内容时写入剪切板，便于你粘贴使用；我们不会读取你剪切板中的内容</view>
+      </view>
+    </view>
+
+    <view class="sec__sub">2. 扫码方（需要挪车的人）提供</view>
+    <view class="tbl">
+      <view class="tbl__row tbl__row--head">
+        <view class="tbl__c1">信息</view>
+        <view class="tbl__c2">是否必填</view>
+        <view class="tbl__c3">用途</view>
+      </view>
+      <view class="tbl__row">
+        <view class="tbl__c1">留言文字</view>
+        <view class="tbl__c2 t-ok">选填</view>
+        <view class="tbl__c3">随微信通知一起推送给车主，说明现场情况（即通知原因）</view>
+      </view>
+    </view>
+
+    <view class="sec__sub">3. 运行过程中自动产生</view>
+    <view class="tbl">
+      <view class="tbl__row tbl__row--head">
+        <view class="tbl__c1">信息</view>
+        <view class="tbl__c2">是否必填</view>
+        <view class="tbl__c3">用途</view>
+      </view>
+      <view class="tbl__row">
+        <view class="tbl__c1">微信 OpenID</view>
+        <view class="tbl__c2">自动</view>
+        <view class="tbl__c3">识别身份、向车主推送订阅消息、防止恶意刷通知</view>
+      </view>
+      <view class="tbl__row">
+        <view class="tbl__c1">通知记录</view>
+        <view class="tbl__c2">自动</view>
+        <view class="tbl__c3">记录通知时间、方式、送达状态，供车主查看与限流</view>
+      </view>
+    </view>
+
+    <view class="sec__note">
+      我们<text class="strong">不收集</text>位置信息、通讯录、通话记录、相册全部内容，
+      也<text class="strong">不获取</text>你的真实姓名、身份证号、车牌登记信息。
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="sec__title">二、信息如何使用</view>
+    <view class="para">
+      上述信息仅用于一个目的：<text class="strong">在他人的车需要挪动时，让双方取得联系</text>。
+    </view>
+    <view class="para">
+      具体为：扫码方扫码后，可通过「微信订阅消息」向车主推送留言，或在车主填写了手机号时一键拨号。
+      车主可在小程序内查看通知记录。
+    </view>
+    <view class="para">
+      我们不会将你的信息用于广告、营销、用户画像，也不会用于本政策声明以外的任何用途。
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="sec__title">三、信息的存储与保护</view>
+    <view class="para">
+      数据存放在<text class="strong">微信云开发</text>（腾讯云）提供的数据库与云存储中，
+      仅开发者本人通过云函数访问，数据库权限设置为「仅管理端可读写」，
+      任何用户都无法直接读取他人数据。
+    </view>
+    <view class="para">
+      为防止号码被批量抓取，挪车码采用 16 位不可遍历的随机 ID，
+      并对扫码查询频率做了限制。
+    </view>
+
+    <view class="sec__sub">存储期限</view>
+    <view class="tbl">
+      <view class="tbl__row tbl__row--head">
+        <view class="tbl__c1">数据类型</view>
+        <view class="tbl__c2">期限</view>
+        <view class="tbl__c3">到期处理</view>
+      </view>
+      <view class="tbl__row">
+        <view class="tbl__c1">车辆与手机号</view>
+        <view class="tbl__c2">至你主动删除</view>
+        <view class="tbl__c3">删除后即从数据库移除，不可恢复</view>
+      </view>
+      <view class="tbl__row">
+        <view class="tbl__c1">通知留言</view>
+        <view class="tbl__c2">{{logRetentionDays}} 天</view>
+        <view class="tbl__c3">自动清理</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="sec__title">四、信息共享、转让与公开</view>
+    <view class="para">
+      我们<text class="strong">不会向任何第三方</text>出售、出租或共享你的个人信息。
+    </view>
+    <view class="para">
+      唯一例外：若你填写了手机号，扫码方点击「拨打电话」时需调起手机系统拨号，我们会向扫码方提供该号码。
+      为保护你的隐私，扫码页面默认仅展示<text class="strong">脱敏号码</text>（如 138****8888），
+      仅在点击拨号时由手机系统展示完整号码。你可以随时删除该号码，改为仅通过微信通知联系。
+    </view>
+    <view class="para">
+      我们<text class="strong">不提供</text>任何号码隐藏、中转呼叫、虚拟号或短信代发服务，
+      拨号功能由微信客户端直接调起手机系统拨号，我们不参与通话，也无法获取通话内容。
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="sec__title">五、你的权利</view>
+    <view class="para">
+      · <text class="strong">查看与修改</text>：在小程序首页进入对应车辆，可随时修改车牌、手机号、备注
+    </view>
+    <view class="para">
+      · <text class="strong">删除</text>：在首页长按或点击删除按钮即可移除车辆，数据立即失效
+    </view>
+    <view class="para">
+      · <text class="strong">撤回授权</text>：在微信「我 - 设置 - 个人信息与权限 - 授权管理」中可撤销对本小程序的授权
+    </view>
+    <view class="para">
+      · <text class="strong">关闭通知</text>：首页可对每辆车单独暂停通知，或不再点击订阅授权
+    </view>
+    <view class="para">
+      如需协助处理你的个人信息，可通过下方联系方式与我们联系，我们会在 15 个工作日内响应。
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="sec__title">六、未成年人信息</view>
+    <view class="para">
+      本服务面向有车一族，不面向未成年人。若你是未满 18 周岁的未成年人，请在监护人陪同下使用，
+      或不要填写任何个人信息。
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="sec__title">七、政策更新</view>
+    <view class="para">
+      本政策如有更新，会在本页面发布新版本，更新内容自生效日期起适用。
+      若涉及信息收集范围、用途的重大变更，我们会通过小程序内提示的方式另行告知。
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="sec__title">八、联系我们</view>
+    <view class="para">
+      如对本政策有任何疑问、意见或投诉，可通过微信客户端内小程序详情页的「投诉」入口，
+      或微信公众平台提供的官方投诉渠道进行反馈，我们会尽快处理。
+    </view>
+  </view>
+
+  <view class="policy__foot t-mute">
+    本政策依据《个人信息保护法》《信息安全技术 个人信息安全规范》
+    及微信《小程序平台运营规范》《小程序用户隐私保护指引》制定。
+  </view>
+</view>

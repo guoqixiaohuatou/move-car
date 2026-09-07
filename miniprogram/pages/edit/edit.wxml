@@ -1,0 +1,139 @@
+<view class="page">
+  <!-- 空白码绑定提示 -->
+  <view class="card card--flat bind-tip" wx:if="{{isBind}}">
+    <view class="bind-tip__title">📇 正在绑定一张空白挪车码</view>
+    <view class="bind-tip__text">
+      填完下面的信息，这张挪车码就归你所有。之后别人扫它，就能微信通知你或直接拨号联系你。
+    </view>
+  </view>
+
+  <view class="card">
+    <!-- 车牌号：确认车辆用，必填 -->
+    <view class="field">
+      <view class="field__label">
+        车牌号
+        <text class="field__req">*</text>
+      </view>
+
+      <view class="plate {{isNewEnergy ? 'plate--green' : 'plate--blue'}}">
+        <!-- 省份选择 -->
+        <view class="plate__province" bindtap="openProvincePicker">
+          <text class="plate__province-text">{{province || '省'}}</text>
+          <view class="plate__province-arrow"></view>
+        </view>
+
+        <!-- 分隔线 -->
+        <view class="plate__split"></view>
+
+        <!-- 车牌主体：点任意格聚焦隐藏 input；第 7 格为新能源位，填了自动变绿牌 -->
+        <view class="plate__body" bindtap="focusBodyInput">
+          <block wx:for="{{bodySlots}}" wx:key="*this">
+            <view
+              class="plate__box {{bodyIndex === index && bodyFocus ? 'plate__box--focus' : ''}} {{index === 6 && !isNewEnergy ? 'plate__box--energy' : ''}}"
+            >
+              <text class="plate__char">{{body[index] || ''}}</text>
+            </view>
+            <!-- 参考设计：在第 2 位后加一个视觉分隔点 -->
+            <view wx:if="{{index === 0}}" class="plate__dot">·</view>
+          </block>
+          <input
+            class="plate__real-input"
+            type="text"
+            maxlength="7"
+            value="{{body}}"
+            focus="{{bodyFocus}}"
+            bindinput="onBodyInput"
+            bindfocus="onBodyFocus"
+            bindblur="onBodyBlur"
+          />
+        </view>
+      </view>
+
+      <view class="field__tip">扫码方将看到完整车牌，新能源显示绿色、油车显示蓝色</view>
+      <view class="field__tip">最后 1 格为新能源位：留空是蓝牌（油车），填上自动变绿牌（新能源）</view>
+    </view>
+
+    <!-- 手机号：最小必要原则，选填 -->
+    <view class="field">
+      <view class="field__label">
+        车主手机号
+        <text class="field__opt">选填</text>
+      </view>
+      <input
+        class="field__input t-mono"
+        type="number"
+        placeholder="不填也可生成，扫码方将通过微信通知你"
+        placeholder-class="field__ph"
+        maxlength="11"
+        value="{{phone}}"
+        bindinput="onPhoneInput"
+      />
+      <view class="field__tip">
+        填写后，扫码方可看到号码并一键拨打；不填则只能通过微信通知联系你
+      </view>
+    </view>
+
+    <view class="field">
+      <view class="field__label">车辆备注</view>
+      <input
+        class="field__input"
+        placeholder="例：白色 SUV / 常用车位 B2-118"
+        placeholder-class="field__ph"
+        maxlength="20"
+        value="{{carModel}}"
+        bindinput="onModelInput"
+      />
+      <view class="field__tip">会展示给扫码方，方便对方确认是不是你的车</view>
+    </view>
+  </view>
+
+  <view class="card card--flat notice">
+    <view class="notice__title">🔒 你的信息会怎么被使用</view>
+    <view class="notice__text">
+      车牌、手机号、车辆备注仅用于「他人扫码时联系车主」这一个用途，不做其他用途，也不提供给任何第三方。
+    </view>
+    <view class="notice__text">
+      手机号填写后会在扫码页展示并支持一键拨打；留空则只通过微信通知联系你。
+    </view>
+    <view class="notice__text">
+      通知留言默认保留 90 天，你可以随时在本小程序内删除。
+    </view>
+    <view class="notice__link" bindtap="goPolicy">查看《隐私政策》</view>
+  </view>
+
+  <button
+    class="btn btn--primary btn--lg btn--block"
+    disabled="{{submitting}}"
+    bindtap="onSubmit"
+  >
+    {{isEdit ? '保存修改' : '生成我的挪车码'}}
+  </button>
+
+  <!-- 省份选择键盘 -->
+  <view
+    class="province-mask {{showProvincePicker ? 'province-mask--show' : ''}}"
+    bindtap="closeProvincePicker"
+  >
+    <view
+      class="province-panel {{showProvincePicker ? 'province-panel--show' : ''}}"
+      catchtap="preventBubble"
+    >
+      <view class="province-panel__hd">
+        <text class="province-panel__title">选择车牌归属地</text>
+        <view class="province-panel__done" bindtap="closeProvincePicker">完成</view>
+      </view>
+      <view class="province-panel__bd">
+        <view
+          wx:for="{{provinces}}"
+          wx:key="*this"
+          class="province-panel__item {{province === item ? 'province-panel__item--active' : ''}}"
+          data-province="{{item}}"
+          bindtap="selectProvince"
+        >
+          {{item}}
+        </view>
+      </view>
+      <view class="province-panel__safe" style="height: {{safeAreaBottom}}px;"></view>
+    </view>
+  </view>
+</view>

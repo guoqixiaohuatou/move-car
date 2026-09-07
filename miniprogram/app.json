@@ -1,0 +1,23 @@
+{
+  "pages": [
+    "pages/home/home",
+    "pages/edit/edit",
+    "pages/code/code",
+    "pages/blanks/blanks",
+    "pages/notify/notify",
+    "pages/logs/logs",
+    "pages/policy/policy"
+  ],
+  "window": {
+    "navigationBarBackgroundColor": "#1677FF",
+    "navigationBarTitleText": "挪车助手",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#F2F4F8",
+    "backgroundTextStyle": "light",
+    "enablePullDownRefresh": false
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents",
+  "__usePrivacyCheck__": true
+}

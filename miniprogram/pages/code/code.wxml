@@ -1,0 +1,72 @@
+<view class="page page--center">
+  <view class="card qr-card" wx:if="{{!loading}}">
+    <view class="qr-card__title t-mono">{{isBlank ? '空白挪车码' : plate}}</view>
+    <view class="qr-card__sub t-mute" wx:if="{{carModel}}">{{carModel}}</view>
+    <view class="qr-card__sub qr-card__sub--wait" wx:if="{{isBlank}}">
+      尚未绑定车辆 · 扫码即可绑定
+    </view>
+
+    <!-- 小程序码 -->
+    <view class="qr-box" bindtap="onPreview" wx:if="{{qrUrl}}">
+      <image class="qr-box__img" src="{{qrUrl}}" mode="aspectFit" show-menu-by-longpress="{{true}}" />
+    </view>
+    <view class="qr-box qr-box--loading" wx:else>
+      <text class="t-mute">生成中…</text>
+    </view>
+
+    <view class="qr-card__hint t-mute">长按二维码可转发 · 点击可放大</view>
+
+    <!-- 订阅状态（空白码还没车主，绑定后再来开启） -->
+    <view class="quota" wx:if="{{tplReady && !isBlank}}">
+      <view class="quota__row">
+        <text class="quota__label">微信通知</text>
+        <text class="quota__value {{quota > 0 ? 't-brand' : 't-danger'}}">
+          {{quota > 0 ? '可通知 ' + quota + ' 次' : '未开启 / 已用完'}}
+        </text>
+      </view>
+      <button
+        class="btn {{quota > 0 ? 'btn--ghost' : 'btn--primary'}} btn--block"
+        disabled="{{subscribing}}"
+        bindtap="onSubscribe"
+      >
+        {{quota > 0 ? '再授权一次（累积次数）' : '开启微信通知'}}
+      </button>
+      <view class="t-mute quota__tip">
+        每次授权可累积 1 次通知额度。弹窗里勾选「总是保持以上选择」后，以后进小程序会自动补额度。
+      </view>
+    </view>
+  </view>
+
+  <view class="empty" wx:else>
+    <view class="empty__icon">⏳</view>
+    <view class="empty__title">生成挪车码中…</view>
+  </view>
+
+  <!-- 操作 -->
+  <block wx:if="{{!loading}}">
+    <view class="action-wrap">
+      <button class="btn btn--primary btn--block btn--lg" bindtap="onSave">
+        保存到相册（去打印）
+      </button>
+      <view class="btn-group btn-group--full">
+        <button class="btn btn--ghost" bindtap="onEditTap">
+          {{isBlank ? '绑定车辆' : '编辑车辆'}}
+        </button>
+        <button class="btn btn--ghost" bindtap="onLogsTap" wx:if="{{!isBlank}}">
+          通知记录
+        </button>
+      </view>
+    </view>
+
+    <view class="card card--flat steps">
+      <view class="steps__title">📌 使用步骤</view>
+      <view class="steps__item">1. 点「保存到相册」，把二维码图片存到手机</view>
+      <view class="steps__item">2. 打印成 6~8cm 见方，过塑或贴冷裱膜防紫外线</view>
+      <view class="steps__item">3. 贴在挡风玻璃左下角内侧（避开年检标位置）</view>
+      <view class="steps__item" wx:if="{{isBlank}}">
+        4. 扫码 → 填写车牌完成绑定（先到先得，谁先绑归谁）
+      </view>
+      <view class="steps__item" wx:else>4. 别人微信扫码 → 通知你 或 直接拨号</view>
+    </view>
+  </block>
+</view>

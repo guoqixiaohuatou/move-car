@@ -1,0 +1,29 @@
+<view class="page">
+  <view class="empty" wx:if="{{loading}}">
+    <view class="empty__icon">⏳</view>
+    <view class="empty__title">加载中…</view>
+  </view>
+
+  <block wx:else>
+    <view class="empty" wx:if="{{logs.length === 0}}">
+      <view class="empty__icon">📭</view>
+      <view class="empty__title">还没有通知记录</view>
+      <view class="empty__desc">有人扫码通知你时，记录会出现在这里</view>
+    </view>
+
+    <view class="card log" wx:for="{{logs}}" wx:key="_id">
+      <view class="log__row">
+        <text class="log__label">车辆</text>
+        <text class="log__value t-mono">{{plate}}</text>
+      </view>
+      <view class="log__row">
+        <text class="log__label">时间</text>
+        <text class="log__value">{{item.timeText}}</text>
+      </view>
+      <view class="log__row">
+        <text class="log__label">通知原因</text>
+        <text class="log__value">{{item.message}}</text>
+      </view>
+    </view>
+  </block>
+</view>

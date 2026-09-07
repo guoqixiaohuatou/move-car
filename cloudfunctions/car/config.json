@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "openapi": [
+      "subscribeMessage.send",
+      "subscribeMessage.getTemplateList",
+      "wxacode.getUnlimited",
+      "security.msgSecCheck"
+    ]
+  },
+  "triggers": [
+    {
+      "name": "cleanExpired",
+      "type": "timer",
+      "config": "0 0 3 * * * *"
+    }
+  ]
+}

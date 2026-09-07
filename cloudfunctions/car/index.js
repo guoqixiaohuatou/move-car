@@ -1,0 +1,1649 @@
+const cloud = require('wx-server-sdk')
+const https = require('https')
+const { URL } = require('url')
+
+cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
+
+const db = cloud.database()
+const _ = db.command
+const COL_CARS = 'car_codes'
+const COL_LOGS = 'notify_logs'
+
+/* ============================================================
+ * 【通知模板配置】—— 默认自动发现，一般无需改动
+ * ------------------------------------------------------------
+ * 全站统一只用「一个」挪车通知模板。工作方式是：
+ *
+ *   1) 自动发现（默认）
+ *      调用微信接口读取你账号下已选用的模板，优先挑标题含「挪车 / 移车 /
+ *      车辆 / 停车」的那一个，再按字段中文名自动映射内容：
+ *          车牌 / 牌照     → 车牌号
+ *          时间 / 日期     → 通知时间
+ *          车型 / 车辆     → 车辆备注
+ *          内容 / 留言/ 说明 → 扫码方留言
+ *      所以在公众平台随便选用一个挪车类模板即可，不用回来改代码。
+ *
+ *   2) 手动指定（可选）
+ *      若账号下有多个模板、自动挑的不对，把模板 ID 填到 MANUAL.templateId；
+ *      MANUAL.data 里左边写模板字段名、右边写数据源，可覆盖自动映射。
+ *
+ * RUN_MODE（运行模式）
+ *   'trial'    体验版 —— 仅体验成员能扫开挪车码，用于调试
+ *   'release'  正式版 —— 任何微信用户都能扫开，需先完成 ICP 备案并通过审核发布
+ *
+ *   这个值会同时驱动两处：
+ *     订阅消息 miniprogramState : trial → trial   /  release → formal
+ *     小程序码 envVersion       : trial → trial   /  release → release
+ *
+ *   ⚠️ 只有 release 模式下，路人才扫得开你的挪车码。
+ *
+ *   切换方式（均无需改代码、无需重部署，见下方 getRunMode）：
+ *     1) 控制台改数据库：云开发控制台 → 数据库 → 新建集合 sys_config →
+ *        新增文档 _id="global"，字段 runMode="trial" 或 "release"
+ *     2) 云端测试调用：{"action":"setRunMode","payload":{"runMode":"release"}}
+ *        （仅车主本人可调用，防止陌生人改动）
+ * ============================================================ */
+const COL_SYS = 'sys_config'
+const DEFAULT_RUN_MODE = 'trial'
+
+/* 运行模式缓存（进程内复用 60 秒；setRunMode 会立即失效，确保切换即时生效） */
+let runModeCache = { at: 0, value: null }
+const RUNMODE_TTL = 60 * 1000
+
+/** 读取当前生效的运行模式；数据库优先，读取失败回退默认值，绝不阻断业务 */
+async function getRunMode() {
+  const now = Date.now()
+  if (runModeCache.value && now - runModeCache.at < RUNMODE_TTL) {
+    return runModeCache.value
+  }
+  let mode = DEFAULT_RUN_MODE
+  try {
+    const doc = await db.collection(COL_SYS).doc('global').get()
+    const raw = doc && doc.data ? doc.data : null
+    if (raw && (raw.runMode === 'release' || raw.runMode === 'trial')) {
+      mode = raw.runMode
+    }
+  } catch (e) {
+    /* 集合不存在 / 读取失败 → 用默认值 */
+  }
+    runModeCache = { at: now, value: mode }
+    return mode
+  }
+
+  /**
+   * 读取空白码管理员 openid（云端配置，免重部署）
+   * ------------------------------------------------------------
+   * 空白挪车码只有管理员本人能生成。管理员 openid 存在
+   *   sys_config/global.adminOpenid
+   * 配置方式二选一：① 首页点「认领管理员身份」一键写入（推荐，无需查 openid）；
+   *   ② 云开发控制台手动填自己的 openid（先用 getProfile/whoami 拿）。
+   * 注意：微信号（如 liilillilllililli）≠ openid，不能直接写库。
+   * 带进程内缓存，避免每次生成都读库。
+   */
+  let adminOpenidCache = { at: 0, value: undefined }
+  const ADMIN_TTL = 5 * 60 * 1000
+  async function getAdminOpenid() {
+    const now = Date.now()
+    if (adminOpenidCache.at && now - adminOpenidCache.at < ADMIN_TTL) {
+      return adminOpenidCache.value
+    }
+    let admin = ''
+    try {
+      const doc = await db.collection(COL_SYS).doc('global').get()
+      const raw = doc && doc.data ? doc.data : null
+      if (raw && raw.adminOpenid) admin = raw.adminOpenid
+    } catch (e) {
+      /* 集合不存在 / 读取失败 → 视为未配置 */
+    }
+    adminOpenidCache = { at: now, value: admin }
+    return admin
+  }
+
+  /** 运行模式 → 小程序码与订阅消息的目标版本 */
+function runModeConfig(runMode) {
+  const release = runMode === 'release'
+  return {
+    miniprogramState: release ? 'formal' : 'trial',
+    envVersion: release ? 'release' : 'trial'
+  }
+}
+
+const TEMPLATE = {
+  page: 'pages/logs/logs',
+  lang: 'zh_CN'
+}
+
+/* 小程序码参数
+ * checkPath: false —— 必填。默认 true 会校验 page 是否存在于「已发布的正式版」，
+ *   未发布的小程序调用会报 41030 invalid page，导致挪车码完全生成不出来。
+ * envVersion —— 由 getRunMode() 在运行时决定（trial → trial / release → release）。 */
+const WXACODE = {
+  checkPath: false
+}
+
+const MANUAL = {
+  // 留空 = 自动发现；填了则固定使用该订阅消息模板（按 priTmplId 匹配）
+  templateId: 'yeifiMbUM_NDnKvICWt1oabyP2trWhTYfG3ve4TMdYU',
+  // 留 null = 根据该模板在账号模板库里的字段结构自动映射（推荐）；
+  // 如需覆盖映射，填 { thing1: '${plate}', thing2: '${message}', time3: '${time}' } 这种形式
+  data: null
+}
+
+/* 模板内容可选的填充数据：
+ *   plate     车牌（脱敏，如 京A***5）
+ *   message   扫码方留言，默认「有人在找您挪车，请尽快处理」
+ *   time      通知时间，格式 2026-09-02 16:41
+ *   carModel  车辆备注（如 白色 SUV）
+ *   phoneMask 车主脱敏手机号（如 138****8888）
+ */
+const DATA_SOURCE = {
+  plate: '',
+  plateMask: '',
+  message: '',
+  time: '',
+  carModel: '',
+  phoneMask: ''
+}
+
+const DEFAULT_MESSAGE = '有人在找您挪车，请尽快处理'
+
+/* ============================================================
+ * 【数据保留期】—— 合规关键项
+ * ------------------------------------------------------------
+ * 隐私政策里向用户承诺了留存天数，这里必须真的执行清理，
+ * 否则「声明 90 天自动清理、实际永久保存」= 虚假声明，
+ * 审核被抽查到会直接驳回。
+ *
+ * 天数必须与 miniprogram/pages/policy/policy.js 的
+ * logRetentionDays 保持一致。
+ *
+ * 执行方式：云开发控制台给本函数加一个定时触发器，
+ * Payload 填 {"action":"cleanExpired","payload":{}}，
+ * Cron 填 0 0 3 * * * *（每天凌晨 3 点）。
+ * ============================================================ */
+const RETENTION = {
+  logDays: 90
+}
+
+/* ============================================================
+ * 【微信 HTTP API 直连】—— 绕开 cloud.openapi 鉴权链路
+ * ------------------------------------------------------------
+ * 现象：本云环境的 cloud.openapi.* 调用持续报
+ *   INVALID_WX_ACCESS_TOKEN / -501001，但数据库、云存储正常。
+ *   这是环境「微信开放能力」鉴权链路在平台层异常（非配置问题，
+ *   控制台里没有任何开关可修）。
+ *
+ * 解法：改用微信标准服务端 HTTP 接口（appid + appsecret 取 token），
+ *   完全不依赖 cloud.openapi，因此不受该环境链路损坏影响。
+ *   个人主体小程序用 appid/appsecret 调用订阅消息发送是官方标准做法，
+ *   不属于「虚拟号 / 中转呼叫」等红线范围。
+ *
+ * 前置：云函数 car 的「配置 → 环境变量」里设置
+ *   MP_APPID     = 小程序 AppID（wxYOUR_APPID_0000）
+ *   MP_APPSECRET = 小程序 AppSecret（公众平台 → 开发 → 开发设置 获取）
+ * ============================================================ */
+const MP_APPID = process.env.MP_APPID || ''
+const MP_APPSECRET = process.env.MP_APPSECRET || ''
+
+/** 进程内 token 缓存（冷启动自动重取，无需落库） */
+let tokenCache = { token: '', expireAt: 0 }
+
+/** 极简 HTTPS 请求（JSON / 二进制） */
+function httpReq(method, urlStr, body, opts) {
+  opts = opts || {}
+  return new Promise((resolve, reject) => {
+    const u = new URL(urlStr)
+    const data = body ? (typeof body === 'string' ? body : JSON.stringify(body)) : null
+    const options = {
+      hostname: u.hostname,
+      path: u.pathname + u.search,
+      method: method,
+      headers: { 'Content-Type': 'application/json', 'User-Agent': 'move-car' }
+    }
+    if (data) options.headers['Content-Length'] = Buffer.byteLength(data)
+    const req = https.request(options, (res) => {
+      const chunks = []
+      res.on('data', (c) => chunks.push(c))
+      res.on('end', () => {
+        const buf = Buffer.concat(chunks)
+        if (opts.binary) {
+          resolve({
+            statusCode: res.statusCode,
+            contentType: res.headers['content-type'] || '',
+            buffer: buf
+          })
+          return
+        }
+        const text = buf.toString('utf8')
+        let json = null
+        try {
+          json = JSON.parse(text)
+        } catch (e) {
+          json = null
+        }
+        resolve({ statusCode: res.statusCode, json: json, text: text })
+      })
+    })
+    req.on('error', reject)
+    if (data) req.write(data)
+    req.end()
+  })
+}
+
+/**
+ * 取 access_token（稳定版接口调用凭据，缓存约 2 小时，提前 5 分钟刷新）
+ * 使用 getStableAccessToken（cgi-bin/stable_token，POST）替代老的 cgi-bin/token（GET）。
+ * 老接口拿到的 token 在「稳定版凭据」开启时会被判定为 "invalid or not latest"，
+ * 表现为 40001；切到稳定版接口后该问题消失。
+ */
+async function getAccessToken() {
+  if (!MP_APPID || !MP_APPSECRET) {
+    throw new Error(
+      '云函数环境变量未配置 MP_APPID / MP_APPSECRET。' +
+      '请到云函数 car 的「配置 → 环境变量」填写：MP_APPID=小程序AppID，' +
+      'MP_APPSECRET=公众平台 → 开发 → 开发设置 获取的 AppSecret。'
+    )
+  }
+  const now = Date.now()
+  if (tokenCache.token && tokenCache.expireAt > now + 5 * 60 * 1000) {
+    return tokenCache.token
+  }
+  const res = await httpReq('POST', 'https://api.weixin.qq.com/cgi-bin/stable_token', {
+    grant_type: 'client_credential',
+    appid: MP_APPID,
+    secret: MP_APPSECRET,
+    force_refresh: false
+  })
+  const j = res.json
+  if (!j || j.errcode) {
+    const code = j ? j.errcode : ''
+    let tip = ''
+    if (code === 40001 || code === 40013 || code === 40125) {
+      tip =
+        '（AppID 或 AppSecret 错误 / 已失效。请到公众平台 → 开发 → 开发设置 确认 AppSecret 为当前有效值；' +
+        '若重置过 AppSecret，请同步更新云函数环境变量 MP_APPSECRET 后重新部署。）'
+    }
+    throw new Error(
+      `获取 access_token 失败：${code ? code + ' ' + (j.errmsg || '') : res.text || '空响应'} ${tip}`
+    )
+  }
+  tokenCache = { token: j.access_token, expireAt: now + (j.expires_in || 7200) * 1000 }
+  return j.access_token
+}
+
+/** 读取已选用的订阅模板（对应 cloud.openapi.subscribeMessage.getTemplateList） */
+async function mpGetTemplateList() {
+  const token = await getAccessToken()
+  const res = await httpReq('GET', `https://api.weixin.qq.com/wxaapi/newtmpl/gettemplate?access_token=${token}`)
+  const j = res.json
+  if (!j || j.errcode) {
+    throw new Error(`读取订阅模板失败：${j ? j.errcode + ' ' + j.errmsg : res.text || '空响应'}`)
+  }
+  return j.data || []
+}
+
+/** 发送订阅消息（对应 cloud.openapi.subscribeMessage.send） */
+async function mpSendSubscribe(opts) {
+  const token = await getAccessToken()
+  const res = await httpReq(
+    'POST',
+    `https://api.weixin.qq.com/cgi-bin/message/subscribe/send?access_token=${token}`,
+    {
+      touser: opts.touser,
+      template_id: opts.templateId,
+      page: opts.page,
+      data: opts.data,
+      miniprogram_state: opts.miniprogramState,
+      lang: 'zh_CN'
+    }
+  )
+  const j = res.json
+  if (!j || j.errcode) {
+    const err = new Error(`订阅消息发送失败：${j ? j.errcode + ' ' + j.errmsg : res.text || '空响应'}`)
+    err.errCode = j ? j.errcode : -1
+    throw err
+  }
+  return j
+}
+
+/** 生成小程序码（对应 cloud.openapi.wxacode.getUnlimited） */
+async function mpGetWxacodeUnlimit(opts) {
+  const token = await getAccessToken()
+  const res = await httpReq(
+    'POST',
+    `https://api.weixin.qq.com/wxa/getwxacodeunlimit?access_token=${token}`,
+    {
+      scene: opts.scene,
+      page: opts.page,
+      width: opts.width || 430,
+      auto_color: false,
+      line_color: opts.lineColor,
+      is_hyaline: opts.isHyaline,
+      check_path: opts.checkPath,
+      env_version: opts.envVersion
+    },
+    { binary: true }
+  )
+  if (res.contentType.indexOf('image') >= 0) {
+    return res.buffer
+  }
+  const text = res.buffer.toString('utf8')
+  let j = null
+  try {
+    j = JSON.parse(text)
+  } catch (e) {}
+  throw new Error(`生成小程序码失败：${j ? j.errcode + ' ' + j.errmsg : text}`)
+}
+
+/* 模板发现结果缓存（云函数实例内复用，10 分钟） */
+let tplCache = { at: 0, value: null }
+const TPL_TTL = 10 * 60 * 1000
+
+/* ============================================================
+ * 工具函数
+ * ============================================================ */
+function pad(n) {
+  return n < 10 ? '0' + n : '' + n
+}
+
+/** 北京时间字符串 2026-09-02 16:41 */
+function cnTime(ts) {
+  const d = new Date((ts || Date.now()) + 8 * 3600 * 1000)
+  return (
+    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}` +
+    ` ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`
+  )
+}
+
+/** 生成不可遍历的码 ID（16 位，去掉易混淆字符） */
+function genCodeId() {
+  const chars = 'abcdefghijkmnpqrstuvwxyz23456789'
+  let s = ''
+  for (let i = 0; i < 16; i++) {
+    s += chars[Math.floor(Math.random() * chars.length)]
+  }
+  return s
+}
+
+/**
+ * 文本安全检测（微信 security.msgSecCheck 云调用）
+ * ------------------------------------------------------------
+ * 审核要求：小程序内用户可自由输入、且会被展示或传播的内容
+ *（本项目 = 扫码方的「留言」，会被推送给车主并存入通知记录）
+ * 必须接入内容安全检测，否则会被以「未对用户发布内容进行审核」为由驳回上架。
+ *
+ * 容错策略：仅当接口明确判定违规（errCode 87014）时才拦截；
+ * 其余异常（权限未开、接口抖动等）一律放行并打日志，
+ * 避免检测接口故障把正常的挪车请求误伤掉。
+ */
+async function checkTextSafe(content, openid) {
+  try {
+    await cloud.openapi.security.msgSecCheck({
+      content: String(content || '').slice(0, 500),
+      version: 2,
+      scene: 2, // 2 = 评论 / 留言类场景
+      openid: openid || ''
+    })
+    return { ok: true }
+  } catch (e) {
+    const msg = e.errMsg || e.message || String(e)
+    // 87014 = 内容含违规信息
+    if (e.errCode === 87014 || msg.indexOf('87014') >= 0 || msg.indexOf('risky') >= 0) {
+      return { ok: false, reason: '留言包含不当内容，请修改后重试' }
+    }
+    console.warn('[msgSecCheck] 检测失败，按放行处理：', msg)
+    return { ok: true, skipped: true }
+  }
+}
+
+function maskPlate(plate) {
+  if (!plate) return ''
+  const s = String(plate)
+  if (s.length <= 3) return s
+  return s.slice(0, 2) + '*'.repeat(s.length - 3) + s.slice(-1)
+}
+
+function maskPhone(phone) {
+  if (!phone) return ''
+  const s = String(phone)
+  if (s.length < 7) return s
+  return s.slice(0, 3) + '****' + s.slice(-4)
+}
+
+/**
+ * 生成（或重新生成）某个 codeId 的小程序码并上传到云存储
+ * ------------------------------------------------------------
+ * 抽成公共函数，供「新建车辆后取码」和「创建空白码时立即出码」两处复用。
+ * 云存储路径固定为 wxacode/{codeId}.png —— 同一张码重复生成会直接覆盖，
+ * 不会堆积垃圾文件（版本切换后重生成正是依赖这个覆盖行为）。
+ *
+ * @returns {Promise<{fileID: string, envVersion: string}>}
+ */
+async function buildWxacode(codeId) {
+  const envVersion = runModeConfig(await getRunMode()).envVersion
+
+  const wxacodeBuf = await mpGetWxacodeUnlimit({
+    scene: codeId, // 最长 32 字符
+    page: 'pages/notify/notify',
+    width: 430,
+    lineColor: { r: 22, g: 119, b: 255 },
+    isHyaline: false,
+    checkPath: WXACODE.checkPath,
+    envVersion
+  })
+
+  const up = await cloud.uploadFile({
+    cloudPath: `wxacode/${codeId}.png`,
+    fileContent: wxacodeBuf
+  })
+
+  return { fileID: up.fileID, envVersion }
+}
+
+/** 按微信订阅消息字段类型截断，避免 47003 */
+function clip(value, fieldKey) {
+  let v = String(value === undefined || value === null ? '' : value)
+  const type = (fieldKey.match(/^[a-z_]+/) || [''])[0]
+  const limits = {
+    thing: 20,
+    character_string: 32,
+    phone_number: 17,
+    car_number: 20,
+    name: 10,
+    phrase: 5,
+    date: 10,
+    time: 20,
+    amount: 10,
+    number: 10
+  }
+  const max = limits[type] || 20
+  return v.length > max ? v.slice(0, max) : v
+}
+
+/* ============================================================
+ * 模板自动发现
+ * ============================================================ */
+
+/** 解析模板 content，形如 "车牌号:{{car_number1.DATA}}\n提醒内容:{{thing2.DATA}}" */
+function parseFields(content) {
+  const fields = []
+  String(content || '')
+    .split('\n')
+    .forEach((line) => {
+      const m = line.match(/\{\{([a-z_]+)(\d*)\.DATA\}\}/)
+      if (!m) return
+      fields.push({
+        key: m[1] + m[2], // 完整字段 key，如 thing2
+        type: m[1], // 字段类型，如 thing
+        label: line.slice(0, m.index).replace(/[:：\s]/g, '') // 中文名，如 车牌号
+      })
+    })
+  return fields
+}
+
+/** 按中文名 → 数据源 */
+const LABEL_RULES = [
+  { re: /车牌|牌照|车号/, src: 'plate' },
+  { re: /时间|日期|时刻/, src: 'time' },
+  { re: /车型|车辆|品牌|颜色/, src: 'carModel' },
+  { re: /地点|位置|地址/, src: 'carModel' },
+  { re: /电话|手机|联系/, src: 'phoneMask' },
+  { re: /内容|留言|说明|备注|事由|详情|描述|原因|信息/, src: 'message' }
+]
+
+/** 按字段类型 → 数据源（中文名没命中时的兜底） */
+const TYPE_RULES = {
+  time: 'time',
+  date: 'time',
+  car_number: 'plate',
+  phone_number: 'phoneMask',
+  thing: 'message',
+  character_string: 'plate',
+  name: 'carModel'
+}
+
+/**
+ * 建立「模板字段 key → 数据源」映射
+ * 微信要求 data 里模板的每个字段都传值且不能多传，所以最后会给剩余字段兜底赋值。
+ */
+function buildDataMap(fields) {
+  const used = {}
+  const map = {}
+  const assign = (key, src) => {
+    if (used[src]) return false
+    used[src] = true
+    map[key] = src
+    return true
+  }
+
+  // 第一轮：按中文名匹配，最准
+  fields.forEach((f) => {
+    const rule = LABEL_RULES.find((r) => r.re.test(f.label))
+    if (rule) assign(f.key, rule.src)
+  })
+
+  // 第二轮：按字段类型匹配
+  fields.forEach((f) => {
+    if (map[f.key]) return
+    const src = TYPE_RULES[f.type]
+    if (src) assign(f.key, src)
+  })
+
+  // 第三轮：剩余字段兜底，保证每个字段都有值
+  const fallback = ['message', 'carModel', 'plate', 'time', 'phoneMask']
+  fields.forEach((f) => {
+    if (map[f.key]) return
+    const src = fallback.find((s) => !used[s]) || 'message'
+    assign(f.key, src)
+  })
+
+  return map
+}
+
+/** 从账号模板列表里挑一个挪车类模板 */
+function pickTemplate(list) {
+  if (!Array.isArray(list) || list.length === 0) return null
+  const keywords = ['挪车', '移车', '挪車', '移車', '车辆', '停车', '挪车提醒']
+  for (let i = 0; i < keywords.length; i++) {
+    const hit = list.find((t) => (t.title || '').indexOf(keywords[i]) >= 0)
+    if (hit) return hit
+  }
+  return list[0]
+}
+
+/**
+ * 解析出当前生效的模板配置
+ * @returns {Promise<{templateId, title, content, dataMap, source, fields}|null>}
+ */
+async function resolveTemplate() {
+  // 手动指定的优先
+  if (MANUAL.templateId) {
+    // 1) 用户手写了字段映射，直接用（最高优先级）
+    if (MANUAL.data) {
+      const dataMap = {}
+      Object.keys(MANUAL.data).forEach((key) => {
+        const m = String(MANUAL.data[key]).match(/\$\{(\w+)\}/)
+        dataMap[key] = m ? m[1] : 'message'
+      })
+      return {
+        templateId: MANUAL.templateId,
+        title: '（手动指定）',
+        content: '',
+        fields: Object.keys(MANUAL.data).map((key) => ({ key, label: key })),
+        dataMap,
+        source: 'manual'
+      }
+    }
+    // 2) 只给了模板 ID：去账号模板库里找到它，自动提取字段与映射
+    const list = await mpGetTemplateList()
+    const tpl = (list || []).find((t) => t.priTmplId === MANUAL.templateId)
+    if (!tpl) {
+      return null
+    }
+    const fields = parseFields(tpl.content)
+    return {
+      templateId: MANUAL.templateId,
+      title: tpl.title || '（手动指定）',
+      content: tpl.content || '',
+      fields: fields.map((f) => ({ key: f.key, label: f.label })),
+      dataMap: buildDataMap(fields),
+      source: 'manual'
+    }
+  }
+
+  // 缓存命中
+  if (tplCache.value && Date.now() - tplCache.at < TPL_TTL) {
+    return tplCache.value
+  }
+
+  const list = await mpGetTemplateList()
+  const tpl = pickTemplate(list)
+  if (!tpl || !tpl.priTmplId) {
+    return null
+  }
+
+  const fields = parseFields(tpl.content)
+  const value = {
+    templateId: tpl.priTmplId,
+    title: tpl.title || '',
+    content: tpl.content || '',
+    fields: fields.map((f) => ({ key: f.key, label: f.label })),
+    dataMap: buildDataMap(fields),
+    source: 'auto'
+  }
+
+  tplCache = { at: Date.now(), value }
+  return value
+}
+
+/** 渲染模板 data：按映射把真实内容填进模板字段 */
+function renderTemplateData(dataMap, ctx) {
+  const out = {}
+  Object.keys(dataMap || {}).forEach((key) => {
+    const src = dataMap[key]
+    const value = ctx[src] === undefined ? '' : ctx[src]
+    out[key] = { value: clip(value, key) }
+  })
+  return out
+}
+
+/** 统一返回 */
+function ok(data) {
+  return { code: 0, data: data || {}, message: 'ok' }
+}
+
+function fail(message, code = -1, detail = null) {
+  return { code, message, detail }
+}
+
+/* ============================================================
+ * 业务 Action
+ * ============================================================ */
+const actions = {
+  /** 创建 / 更新车辆 */
+  async save({ openid, payload }) {
+    const { codeId, plate, phone, carModel } = payload
+
+    if (!plate) {
+      return fail('车牌号不能为空', 400)
+    }
+
+    // 手机号【选填】：留空表示车主只接受微信通知，不提供电话联系。
+    // 传了就必须是合法号码，避免脏数据导致扫码页展示错号。
+    const phoneValue = String(phone || '').trim()
+    if (phoneValue && !/^1[3-9]\d{9}$/.test(phoneValue)) {
+      return fail('手机号格式不正确', 400)
+    }
+
+    // 更新已有车辆 / 绑定空白码
+    if (codeId) {
+      // 注意：这里刻意不按 openid 过滤 —— 空白码还没归属任何人，
+      // 必须能查到才能走下面的「先到先得」绑定分支。
+      const exist = await db.collection(COL_CARS).where({ codeId }).limit(1).get()
+
+      if (exist.data.length === 0) {
+        return fail('车辆不存在或无权修改', 403)
+      }
+
+      const car = exist.data[0]
+
+      // ---- 空白码绑定：先到先得 ----
+      // bound === false 表示这张码尚未绑定车辆，任何扫码人都能绑定。
+      // 用「条件更新」保证原子性：where 里带 bound:false，
+      // 若两人同时抢绑，只有第一个的 updated === 1，第二个拿到 409。
+      if (car.bound === false) {
+        const upd = await db
+          .collection(COL_CARS)
+          .where({ codeId, bound: false })
+          .update({
+            data: {
+              plate,
+              phone: phoneValue,
+              carModel: carModel || '',
+              bound: true,
+              _openid: openid, // 所有权转移给绑定者
+              enabled: true,
+              updateTime: Date.now()
+            }
+          })
+
+        if (!upd.stats || upd.stats.updated === 0) {
+          return fail('这个挪车码刚被别人绑定了，请确认贴纸是否归你所有', 409)
+        }
+        return ok({ codeId, bound: true })
+      }
+
+      // ---- 已绑定：仅车主本人可改 ----
+      if (car._openid !== openid) {
+        return fail('车辆不存在或无权修改', 403)
+      }
+
+      await db.collection(COL_CARS).doc(car._id).update({
+        data: { plate, phone: phoneValue, carModel: carModel || '', updateTime: Date.now() }
+      })
+      return ok({ codeId })
+    }
+
+    // 新建：生成唯一 codeId
+    let newId = genCodeId()
+    for (let i = 0; i < 5; i++) {
+      const dup = await db.collection(COL_CARS).where({ codeId: newId }).count()
+      if (dup.total === 0) break
+      newId = genCodeId()
+    }
+
+    await db.collection(COL_CARS).add({
+      data: {
+        codeId: newId,
+        _openid: openid,
+        plate,
+        phone: phoneValue,
+        carModel: carModel || '',
+        bound: true, // 直接建车 = 已绑定；空白码才会是 false
+        enabled: true,
+        quota: 0, // 订阅消息可推送次数
+        wxacodeFileID: '',
+        createTime: Date.now(),
+        updateTime: Date.now(),
+        lastNotifyTime: 0
+      }
+    })
+
+    return ok({ codeId: newId })
+  },
+
+  /**
+   * 生成一张「空白挪车码」
+   * ------------------------------------------------------------
+   * 空白码 = 小程序码已生成、但尚未绑定车辆的记录（bound:false，plate 为空）。
+   * 任何人扫到它都能填写车牌完成绑定，**先到先得**：绑定后所有权（_openid）
+   * 立即转移给绑定者，创建者不再持有这张码。
+   *
+   * 典型用法：生成码 → 打印成贴纸 → 贴到车上（或转送他人）→ 扫码绑定车辆。
+   * 这样一张贴纸可以先印刷、后绑定，不必提前知道车牌号。
+   */
+  async createBlank({ openid }) {
+    let newId = genCodeId()
+    for (let i = 0; i < 5; i++) {
+      const dup = await db.collection(COL_CARS).where({ codeId: newId }).count()
+      if (dup.total === 0) break
+      newId = genCodeId()
+    }
+
+    // 立即出码：空白码的意义就是「先拿到图去打印」，不能等绑定后才有。
+    // 生成失败也不阻断建记录，用户可在挪车码页重试生成。
+    let wxacodeFileID = ''
+    let wxacodeEnv = ''
+    try {
+      const built = await buildWxacode(newId)
+      wxacodeFileID = built.fileID
+      wxacodeEnv = built.envVersion
+    } catch (e) {
+      /* 留空，稍后重试 */
+    }
+
+    await db.collection(COL_CARS).add({
+      data: {
+        codeId: newId,
+        _openid: openid,
+        plate: '',
+        phone: '',
+        carModel: '',
+        bound: false,
+        enabled: true,
+        quota: 0, // 订阅消息可推送次数
+        wxacodeFileID,
+        wxacodeEnv,
+        createTime: Date.now(),
+        updateTime: Date.now(),
+        lastNotifyTime: 0
+      }
+    })
+
+    return ok({ codeId: newId, fileID: wxacodeFileID, bound: false })
+  },
+
+  /**
+   * 批量生成空白挪车码
+   * ------------------------------------------------------------
+   * 用于「管理员一次印一批贴纸，分发给亲友扫码绑定」的场景。
+   *
+   * - count 由前端传入，服务端做上限校验（防绕过前端的恶意请求）。
+   * - 每张码都跑一遍 createBlank 的写入 + 出码逻辑；任何一张失败不影响其他张。
+   * - 返回 items 里只保留「写入成功」的码（失败的在 failed 字段计数），
+   *   前端展示时直接用返回的 items 数组。
+   */
+  async createBlanks({ openid, payload }) {
+    // ---- 权限：只有管理员本人能生成空白挪车码 ----
+    const adminOpenid = await getAdminOpenid()
+    if (!adminOpenid || openid !== adminOpenid) {
+      return fail('仅管理员可生成空白挪车码', 403)
+    }
+
+    const count = Math.max(1, parseInt(payload && payload.count, 10) || 1)
+    const MAX_BLANK_BATCH = 5 // 与前端选数上限对齐；改这里同步改前端
+    const N = Math.min(count, MAX_BLANK_BATCH)
+
+    const items = []
+    let failed = 0
+
+    // 串行生成，避免瞬时并发调用微信 getwxacodeunlimit 接口触发限流
+    for (let i = 0; i < N; i++) {
+      let newId = genCodeId()
+      for (let t = 0; t < 5; t++) {
+        const dup = await db.collection(COL_CARS).where({ codeId: newId }).count()
+        if (dup.total === 0) break
+        newId = genCodeId()
+      }
+
+      // 出码（失败也不阻断，fileID 留空让前端用 getWxacode 重试）
+      let wxacodeFileID = ''
+      let wxacodeEnv = ''
+      try {
+        const built = await buildWxacode(newId)
+        wxacodeFileID = built.fileID
+        wxacodeEnv = built.envVersion
+      } catch (e) {
+        /* 留空 */
+      }
+
+      try {
+        await db.collection(COL_CARS).add({
+          data: {
+            codeId: newId,
+            _openid: openid,
+            plate: '',
+            phone: '',
+            carModel: '',
+            bound: false,
+            enabled: true,
+            quota: 0,
+            wxacodeFileID,
+            wxacodeEnv,
+            createTime: Date.now(),
+            updateTime: Date.now(),
+            lastNotifyTime: 0
+          }
+        })
+        items.push({ codeId: newId, fileID: wxacodeFileID, bound: false })
+      } catch (e) {
+        failed++
+      }
+    }
+
+    return ok({ items, failed, requested: N })
+  },
+
+  /**
+   * 当前用户身份快照
+   * 前端用它决定是否显示「生成空白挪车码」入口，顺便把 openid 暴露出来
+   * 供管理员复制到 sys_config/global.adminOpenid 完成权限配置。
+   */
+  async getProfile({ openid }) {
+    const adminOpenid = await getAdminOpenid()
+    const isAdmin = !!(adminOpenid && openid && openid === adminOpenid)
+    // hasAdmin = 系统里是否已有管理员。前端据此决定是否还显示「认领」入口：
+    // 一旦有人认领过，认领按钮对所有人永久隐藏，避免后来的陌生人抢认管理员。
+    return ok({ openid: openid || '', isAdmin, hasAdmin: !!adminOpenid })
+  },
+
+  /** 返回调用者自己的 openid（只读自己，任何登录用户可调用，安全） */
+  async whoami({ openid }) {
+    return ok({ openid: openid || '' })
+  },
+
+  /**
+   * 认领管理员身份（自助配置空白码权限）
+   * ------------------------------------------------------------
+   * 调用者把自己的 openid 写入 sys_config/global.adminOpenid：
+   *   - 未配置过 → 直接认领（首个进入首页并点击的人成为管理员）
+   *   - 已配置且是本人 → 幂等成功（提示已认领）
+   *   - 已配置且是别人 → 拒绝（保留 force=1 留给真正主人找回）
+   * 这样管理员无需去控制台查/粘 openid，首页点一下即可解锁空白码生成。
+   * 注意：微信号（如 liilillilllililli）≠ openid，不能直接写库；
+   *       本接口写入的是微信系统下发的真实 openid。
+   *
+   * 另外支持 payload.openid 显式指定（用于云开发控制台「云端测试」）：
+   *   云端测试没有登录态，wxCtx.OPENID 为空，此时可手工传入 openid 完成配置，
+   *   省去"手机复制 → 电脑粘贴"这个跨设备根本走不通的步骤。
+   *   安全级别与前端认领完全相同——仅在系统尚无管理员时允许，已被认领则拒绝。
+   */
+  async claimAdmin({ openid, payload }) {
+    let target = openid
+    if (!target && payload && typeof payload.openid === 'string') {
+      target = payload.openid.trim()
+    }
+    if (!target) {
+      return fail('未获取到用户身份', 401)
+    }
+    // 格式校验：openid 是 o 开头的 28 位字符串。挡住误把「微信号」当 openid 填进来
+    // （微信号 ≠ openid，填错会导致校验永远不通过，连本人也生成不了空白码）
+    if (!/^o[A-Za-z0-9_-]{27}$/.test(target)) {
+      return fail(
+        'openid 格式不正确（应为 o 开头、共 28 位字符）。注意：微信号不等于 openid，请用小程序首页显示的真实 openid。',
+        400
+      )
+    }
+    const adminOpenid = await getAdminOpenid()
+    if (adminOpenid && adminOpenid !== target) {
+      const force = payload && payload.force === true
+      if (!force) {
+        return fail('管理员已认领，无需重复操作', 409)
+      }
+    }
+    // sys_config 集合可能还不存在（首次用到时才会建），先尝试创建；已存在则忽略
+    try {
+      await db.createCollection(COL_SYS)
+    } catch (e) {
+      /* 已存在则忽略 */
+    }
+    // 优先 update（保留文档其他字段如 runMode），文档不存在时退而 set 新建
+    try {
+      const upd = await db.collection(COL_SYS).doc('global').update({
+        data: { adminOpenid: target }
+      })
+      if (!upd || !upd.stats || upd.stats.updated === 0) {
+        await db.collection(COL_SYS).doc('global').set({
+          data: { adminOpenid: target }
+        })
+      }
+    } catch (e) {
+      try {
+        await db.collection(COL_SYS).doc('global').set({
+          data: { adminOpenid: target }
+        })
+      } catch (e2) {
+        return fail('写入管理员配置失败：' + (e2.errMsg || e2.message || String(e2)), 500)
+      }
+    }
+    // 立即清缓存，让 getAdminOpenid 下次读到最新值
+    adminOpenidCache = { at: 0, value: undefined }
+    return ok({ openid: target, isAdmin: true, claimed: true })
+  },
+
+  /** 我的车辆列表 */
+  async list({ openid }) {
+    const res = await db
+      .collection(COL_CARS)
+      .where({ _openid: openid })
+      .orderBy('createTime', 'desc')
+      .limit(50)
+      .get()
+
+    return ok(res.data)
+  },
+
+  /** 车辆详情（仅车主本人） */
+  async detail({ openid, payload }) {
+    const { codeId } = payload
+    const res = await db
+      .collection(COL_CARS)
+      .where({ codeId, _openid: openid })
+      .limit(1)
+      .get()
+
+    if (res.data.length === 0) {
+      return fail('车辆不存在或无权查看', 403)
+    }
+    return ok(res.data[0])
+  },
+
+  /**
+   * 扫码方获取车辆信息
+   * 注意：这里会返回完整 phone —— 因为 wx.makePhoneCall 必须拿到真实号码，
+   * 前端默认不渲染该字段（由 config.SHOW_PLAIN_PHONE 控制）。
+   */
+  async getByCode({ openid, payload }) {
+    const { codeId } = payload
+    if (!codeId) return fail('缺少码 ID', 400)
+
+    // ---- 防拖库频控 ----
+    // 该接口不校验身份（任何人扫码都要能调用），因此必须限制单用户查询频率，
+    // 否则可被脚本遍历 codeId 批量拉取车主手机号。
+    const recentViews = await db
+      .collection(COL_LOGS)
+      .where({
+        fromOpenid: openid,
+        type: 'view',
+        createTime: _.gt(Date.now() - 10 * 60 * 1000)
+      })
+      .count()
+
+    if (recentViews.total > 50) {
+      return fail('操作过于频繁，请稍后再试', 429)
+    }
+
+    const res = await db.collection(COL_CARS).where({ codeId }).limit(1).get()
+    if (res.data.length === 0) {
+      return fail('挪车码无效，请确认贴纸是否完整', 404)
+    }
+
+    const car = res.data[0]
+
+    // ---- 空白码：尚未绑定车辆，引导扫码方去绑定 ----
+    // 未绑定的码不含任何车主信息，不存在拖库风险，因此直接返回，
+    // 也不写 view 日志（否则会污染绑定后车主的通知记录）。
+    if (car.bound === false || !car.plate) {
+      return ok({ bound: false, codeId })
+    }
+
+    if (!car.enabled) {
+      return fail('车主已暂停该挪车码的通知功能', 403)
+    }
+
+    // 记录一次「被扫码」（车主可在通知记录里看到；同时用于频控统计）
+    writeLog({
+      codeId,
+      fromOpenid: openid,
+      type: 'view',
+      status: 'ok',
+      message: ''
+    })
+
+    return ok({
+      plateFull: car.plate,
+      plateMask: maskPlate(car.plate),
+      carModel: car.carModel || '',
+      phone: car.phone,
+      phoneMask: maskPhone(car.phone),
+      enabled: car.enabled
+    })
+  },
+
+  /** 累积订阅消息额度（车主每次授权 +1，作用于其名下所有车辆） */
+  async addQuota({ openid, payload }) {
+    const { codeId } = payload || {}
+
+    await db
+      .collection(COL_CARS)
+      .where({ _openid: openid })
+      .update({ data: { quota: _.inc(1) } })
+
+    // 传了 codeId 就回读这辆车的额度，否则回读第一辆（调用方只关心是否成功）
+    const where = codeId ? { codeId, _openid: openid } : { _openid: openid }
+    const one = await db.collection(COL_CARS).where(where).limit(1).get()
+    const quota = one.data.length ? one.data[0].quota : 0
+    return ok({ quota })
+  },
+
+  /** 启用 / 停用 */
+  async toggle({ openid, payload }) {
+    const { codeId, enabled } = payload
+    await db
+      .collection(COL_CARS)
+      .where({ codeId, _openid: openid })
+      .update({ data: { enabled: !!enabled, updateTime: Date.now() } })
+    return ok({ enabled: !!enabled })
+  },
+
+  /** 删除 */
+  async remove({ openid, payload }) {
+    const { codeId } = payload
+    const res = await db
+      .collection(COL_CARS)
+      .where({ codeId, _openid: openid })
+      .limit(1)
+      .get()
+
+    if (res.data.length === 0) return fail('车辆不存在', 403)
+
+    await db.collection(COL_CARS).doc(res.data[0]._id).remove()
+    return ok({ removed: true })
+  },
+
+  /**
+   * 切换运行模式（云端配置，免改代码 / 免重部署）
+   * ------------------------------------------------------------
+   * 仅车主本人可调用（名下必须已有车辆），防止陌生人改动全局开关。
+   * 用法（云端测试）：{"action":"setRunMode","payload":{"runMode":"release"}}
+   * 切换后立即失效运行模式缓存，下一次生成挪车码 / 发通知即生效。
+   */
+  async setRunMode({ openid, payload }) {
+    const { runMode } = payload || {}
+    if (runMode !== 'trial' && runMode !== 'release') {
+      return fail('runMode 只能是 trial 或 release', 400)
+    }
+    // 仅名下有车的车主可切换，防止陌生人改动
+    const mine = await db.collection(COL_CARS).where({ _openid: openid }).limit(1).get()
+    if (!mine.data || mine.data.length === 0) {
+      return fail('仅车主本人可切换运行模式', 403)
+    }
+    try {
+      await db.createCollection(COL_SYS)
+    } catch (e) {
+      /* 已存在则忽略 */
+    }
+    // 必须用 update 而不是 set：set 会覆盖整个 global 文档，
+    // 把同一文档里的 adminOpenid（空白码管理员配置）一并清掉。
+    try {
+      const upd = await db
+        .collection(COL_SYS)
+        .doc('global')
+        .update({ data: { runMode, updatedAt: Date.now() } })
+      if (!upd || !upd.stats || upd.stats.updated === 0) {
+        await db
+          .collection(COL_SYS)
+          .doc('global')
+          .set({ data: { runMode, updatedAt: Date.now() } })
+      }
+    } catch (e) {
+      await db
+        .collection(COL_SYS)
+        .doc('global')
+        .set({ data: { runMode, updatedAt: Date.now() } })
+    }
+    runModeCache = { at: 0, value: null } // 立即失效缓存
+    return ok({
+      runMode,
+      isRelease: runMode === 'release',
+      hint:
+        runMode === 'release'
+          ? '已切到正式版：路人可扫开，但需先完成 ICP 备案并正式发布小程序'
+          : '已切回体验版：仅体验成员能扫开挪车码'
+    })
+  },
+
+  /**
+   * 读取当前运行模式（供小程序端展示开关状态）
+   * ------------------------------------------------------------
+   * 读取无需 owner 权限，任何已登录用户都能查；写（setRunMode）才需要车主身份。
+   */
+  async getRunMode() {
+    const runMode = await getRunMode()
+    return ok({ runMode, isRelease: runMode === 'release' })
+  },
+
+  /** 通知记录 */
+  async logs({ openid, payload }) {
+    const { codeId } = payload
+    const carRes = await db
+      .collection(COL_CARS)
+      .where({ codeId, _openid: openid })
+      .limit(1)
+      .get()
+
+    if (carRes.data.length === 0) return fail('车辆不存在或无权查看', 403)
+
+    const logs = await db
+      .collection(COL_LOGS)
+      .where({ codeId })
+      .orderBy('createTime', 'desc')
+      .limit(50)
+      .get()
+
+    return ok({ plate: carRes.data[0].plate, logs: logs.data })
+  },
+
+  /** 生成小程序码（已生成过则直接复用） */
+  async getWxacode({ openid, payload }) {
+    const { codeId } = payload
+    const res = await db
+      .collection(COL_CARS)
+      .where({ codeId, _openid: openid })
+      .limit(1)
+      .get()
+
+    if (res.data.length === 0) return fail('车辆不存在或无权查看', 403)
+
+    const car = res.data[0]
+    // 版本切换（体验版 ↔ 正式版）后旧码扫不开，必须重新生成
+    const envVersion = runModeConfig(await getRunMode()).envVersion
+    if (car.wxacodeFileID && car.wxacodeEnv === envVersion) {
+      return ok({ fileID: car.wxacodeFileID, cached: true })
+    }
+
+    try {
+      const built = await buildWxacode(codeId)
+
+      await db.collection(COL_CARS).doc(car._id).update({
+        data: {
+          wxacodeFileID: built.fileID,
+          wxacodeEnv: built.envVersion,
+          updateTime: Date.now()
+        }
+      })
+
+      return ok({ fileID: built.fileID, cached: false })
+    } catch (err) {
+      const code = err.errCode
+      let tip = `生成小程序码失败：${err.errMsg || err.message || '未知错误'}`
+      if (code === 41030) {
+        tip =
+          '生成小程序码失败（41030 页面不存在）。请确认云函数里 checkPath 已设为 false；' +
+          '若小程序已发布，请把运行模式改成 release（改数据库 sys_config/global.runMode 或调用 setRunMode，无需重部署）。'
+      }
+      return fail(tip, 500, code)
+    }
+  },
+
+  /**
+   * 清理过期数据（由定时触发器调用，不需要前端调用）
+   * ------------------------------------------------------------
+   * 删除超过保留期的通知记录，兑现隐私政策里的留存承诺。
+   *
+   * 配置路径：云开发控制台 → 云函数 car → 定时触发器 → 新增
+   *   触发周期：自定义 Cron   0 0 3 * * * *（每天凌晨 3 点）
+   *   Payload： {"action":"cleanExpired","payload":{}}
+   *
+   * 单次最多处理 500 条，历史数据多的话首次要连跑几天才追平。
+   */
+  async cleanExpired() {
+    const now = Date.now()
+    const logBefore = now - RETENTION.logDays * 86400000
+    const result = { logs: 0, rounds: 0 }
+
+    // 删除超过保留期的通知记录
+    for (let i = 0; i < 5; i++) {
+      const rm = await db
+        .collection(COL_LOGS)
+        .where({ createTime: _.lt(logBefore) })
+        .limit(100)
+        .get()
+
+      if (rm.data.length === 0) break
+      const ids = rm.data.map((d) => d._id)
+      const del = await db
+        .collection(COL_LOGS)
+        .where({ _id: _.in(ids) })
+        .remove()
+      result.logs += del.stats ? del.stats.removed : ids.length
+      result.rounds++
+      if (rm.data.length < 100) break
+    }
+
+    return ok(result)
+  },
+
+  /**
+   * 查看当前生效的通知模板（排查用）
+   * 返回模板标题、字段列表和自动映射结果，
+   * 可在开发者工具 > 云开发 > 云函数 里用 action=templateInfo 直接调用验证。
+   */
+  async templateInfo() {
+    let tpl = null
+    let error = ''
+    try {
+      tpl = await resolveTemplate()
+    } catch (e) {
+      error = e.errMsg || e.message || String(e)
+    }
+
+    if (!tpl) {
+      return ok({
+        ready: false,
+        templateId: '',
+        title: '',
+        fields: [],
+        dataMap: {},
+        source: 'none',
+        hint: error
+          ? `读取模板失败：${error}。请确认云函数 car 已设置环境变量 MP_APPID / MP_APPSECRET。`
+          : '账号下还没有选用的模板。请到公众平台 > 功能 > 订阅消息 > 公共模板库，搜索「挪车」选用一个。'
+      })
+    }
+
+    return ok({
+      ready: true,
+      templateId: tpl.templateId,
+      title: tpl.title,
+      fields: tpl.fields || Object.keys(tpl.dataMap || {}),
+      dataMap: tpl.dataMap,
+      source: tpl.source
+    })
+  },
+
+  /**
+   * 部署自检（排查用）
+   * 不需要打开小程序，在云开发控制台 > 云函数 > car > 云端测试里
+   * 填 {"action":"health","payload":{}} 直接运行，一次验完以下事项：
+   *   1. 云函数是否部署成功（能返回结果即成功）
+   *   2. 两个数据库集合是否存在（不存在会尝试自动创建）
+   *   3. openapi 权限是否生效（能否读到订阅消息模板）
+   *   4. 当前 RUN_MODE（决定生成的码扫开的是体验版还是正式版）
+   *   5. 空白码管理员是否已配置（决定谁能生成空白码）
+   */
+  async health() {
+    const checks = []
+
+    // ---- 1. 数据库集合 ----
+    for (const name of [COL_CARS, COL_LOGS]) {
+      try {
+        await db.collection(name).limit(1).get()
+        checks.push({ item: `集合 ${name}`, ok: true, detail: '已存在' })
+      } catch (e) {
+        // 集合不存在时尝试自动创建，省去手动去控制台新建
+        let created = false
+        let err = ''
+        try {
+          await db.createCollection(name)
+          created = true
+        } catch (e2) {
+          err = e2.errMsg || e2.message || String(e2)
+        }
+        checks.push({
+          item: `集合 ${name}`,
+          ok: created,
+          detail: created
+            ? '原本不存在，已自动创建（请到控制台把权限改成「仅管理端可读写」）'
+            : `不存在且自动创建失败：${err}。请到云开发控制台 > 数据库 手动新建，名字要一字不差。`
+        })
+      }
+    }
+
+    // ---- 2. 订阅消息模板 + openapi 权限 ----
+    let tplReady = false
+    let tplDetail = ''
+    try {
+      const tpl = await resolveTemplate()
+      if (tpl) {
+        tplReady = true
+        tplDetail = `已发现模板「${tpl.title}」(${tpl.source === 'manual' ? '手动指定' : '自动发现'})`
+      } else {
+        tplDetail =
+          '账号下还没有选用的模板。公众平台 > 功能 > 订阅消息 > 公共模板库，搜「挪车」选用一个。'
+      }
+    } catch (e) {
+      tplDetail = `读取失败：${e.errMsg || e.message || String(e)}。请确认云函数 car 的「配置 → 环境变量」已设置 MP_APPID / MP_APPSECRET（AppSecret 在公众平台 → 开发 → 开发设置 获取）。`
+    }
+    checks.push({ item: '订阅消息模板', ok: tplReady, detail: tplDetail })
+
+    // ---- 3. 运行模式（云端配置项，免重部署） ----
+    const runMode = await getRunMode()
+    checks.push({
+      item: '运行模式',
+      ok: true,
+      detail:
+        runMode === 'release'
+          ? 'release：生成的码指向正式版，订阅消息发往正式版'
+          : 'trial：生成的码指向体验版（仅体验成员能扫开）。正式发布后请把运行模式改成 release——无需重部署，改数据库 sys_config/global.runMode 或调用 setRunMode 即可。'
+    })
+
+    // ---- 4. 空白码管理员配置 ----
+    const adminOpenid = await getAdminOpenid()
+    checks.push({
+      item: '空白码管理员',
+      ok: !!adminOpenid,
+      detail: adminOpenid
+        ? `已配置（${adminOpenid.slice(0, 6)}…），空白码仅该账号可生成`
+        : '未配置 sys_config/global.adminOpenid：空白码生成接口未设防，任何人都可调用。请先用 getProfile 拿到你的 openid，填进该字段。'
+    })
+
+    const passed = checks.filter((c) => c.ok).length
+    return ok({
+      allPass: passed === checks.length,
+      passed,
+      total: checks.length,
+      env: cloud.DYNAMIC_CURRENT_ENV ? 'current' : 'unknown',
+      runMode: runMode,
+      checks
+    })
+  },
+
+  /**
+   * 通知车主（核心）
+   */
+  async notify({ openid, payload }) {
+    const { codeId, message } = payload
+    if (!codeId) return fail('缺少码 ID', 400)
+
+    const res = await db.collection(COL_CARS).where({ codeId }).limit(1).get()
+    if (res.data.length === 0) return fail('挪车码无效', 404)
+
+    const car = res.data[0]
+    const now = Date.now()
+
+    if (!car.enabled) {
+      return fail('车主已暂停通知功能，请直接拨打电话', 403)
+    }
+
+    // ---- 防骚扰限流 ----
+    // 注意：必须限定 type='notify'。日志集合里还有 type='view'（被扫码记录），
+    // 若不过滤，用户刚扫完码就会被判定为「已通知过」而无法发送。
+    // 1) 同一个扫码人 60 秒内只能通知同一辆车 1 次
+    const recent = await db
+      .collection(COL_LOGS)
+      .where({
+        codeId,
+        fromOpenid: openid,
+        type: 'notify',
+        createTime: _.gt(now - 60 * 1000)
+      })
+      .count()
+
+    if (recent.total > 0) {
+      return fail('刚刚已经通知过车主了，请稍等一分钟', 'COOLDOWN', 60)
+    }
+
+    // 2) 同一辆车 10 秒内全局只允许 1 次（防并发刷）
+    const recentGlobal = await db
+      .collection(COL_LOGS)
+      .where({
+        codeId,
+        type: 'notify',
+        createTime: _.gt(now - 10 * 1000)
+      })
+      .count()
+
+    if (recentGlobal.total > 0) {
+      return fail('车主刚收到通知，请稍后再试', 'COOLDOWN', 10)
+    }
+
+    const text = (message && String(message).trim()) || DEFAULT_MESSAGE
+
+    // ---- 内容安全检测（UGC 必做，审核硬性要求）----
+    // 扫码方可自由输入留言 = 用户生成内容，必须先过检再落库 / 推送给车主。
+    // 只拦截接口明确判定为违规的内容；检测接口异常时放行，不影响正常挪车。
+    if (text && text !== DEFAULT_MESSAGE) {
+      const safe = await checkTextSafe(text, openid)
+      if (!safe.ok) {
+        return fail(safe.reason || '留言包含不当内容，请修改后重试', 'RISKY_CONTENT')
+      }
+    }
+
+    // ---- 解析统一通知模板 ----
+    let tpl = null
+    try {
+      tpl = await resolveTemplate()
+    } catch (e) {
+      tpl = null
+    }
+
+    if (!tpl || !tpl.templateId) {
+      await writeLog({
+        codeId,
+        fromOpenid: openid,
+        type: 'notify',
+        status: 'no_template',
+        message: text,
+      })
+      updateLastNotify(car._id, now)
+      return ok({
+        delivered: false,
+        reason: 'no_template',
+        message:
+          '未找到可用的通知模板。请到公众平台 > 功能 > 订阅消息 > 公共模板库，搜索「挪车」选用任意一个模板后重试。在此之前可直接拨打电话联系车主。'
+      })
+    }
+
+    if (!car.quota || car.quota <= 0) {
+      await writeLog({
+        codeId,
+        fromOpenid: openid,
+        type: 'notify',
+        status: 'no_quota',
+        message: text,
+      })
+      updateLastNotify(car._id, now)
+      return ok({
+        delivered: false,
+        reason: 'no_quota',
+        message: '车主的微信通知次数已用完，建议直接拨打电话。'
+      })
+    }
+
+    // ---- 发送订阅消息 ----
+    const plateMask = maskPlate(car.plate)
+    const data = renderTemplateData(tpl.dataMap, {
+      plate: plateMask,
+      plateMask,
+      message: text,
+      time: cnTime(now),
+      carModel: car.carModel || '车辆',
+      phoneMask: maskPhone(car.phone)
+    })
+
+    try {
+      const cfg = runModeConfig(await getRunMode())
+      await mpSendSubscribe({
+        touser: car._openid,
+        page: TEMPLATE.page,
+        data,
+        templateId: tpl.templateId,
+        miniprogramState: cfg.miniprogramState
+      })
+
+      // 发送成功，扣减额度
+      await db.collection(COL_CARS).doc(car._id).update({
+        data: { quota: _.inc(-1) }
+      })
+
+      await writeLog({
+        codeId,
+        fromOpenid: openid,
+        type: 'notify',
+        status: 'sent',
+        message: text,
+      })
+      updateLastNotify(car._id, now)
+
+      return ok({ delivered: true })
+    } catch (err) {
+      const errCode = err.errCode
+      let reason = 'send_failed'
+      let tip = '通知发送失败，建议直接拨打电话。'
+
+      if (errCode === 43101) {
+        // 用户拒收：通常是额度已耗尽，把额度清零避免持续报错
+        reason = 'refused'
+        tip = '车主已取消接收该类通知，请直接拨打电话。'
+        await db.collection(COL_CARS).doc(car._id).update({ data: { quota: 0 } })
+      } else if (errCode === 47003) {
+        reason = 'bad_template'
+        tip =
+          '模板字段有误（47003）。自动模式一般不会出现；若你填了 MANUAL.data，请核对左边字段名是否与所选模板完全一致。'
+        // 清缓存，下次重新拉取模板
+        tplCache = { at: 0, value: null }
+      } else if (errCode === 40037 || errCode === 40036) {
+        reason = 'bad_template_id'
+        tip = '订阅消息模板 ID 无效，请到公众平台重新选用模板。'
+        tplCache = { at: 0, value: null }
+      } else if (errCode === 48001) {
+        reason = 'api_forbidden'
+        tip = '小程序未开通订阅消息能力，请到公众平台检查。'
+      }
+
+      await writeLog({
+        codeId,
+        fromOpenid: openid,
+        type: 'notify',
+        status: reason,
+        message: text,
+      })
+      updateLastNotify(car._id, now)
+
+      return ok({
+        delivered: false,
+        reason,
+        message: tip,
+        detail: err.errMsg || err.message
+      })
+    }
+  }
+}
+
+/* 写通知日志（不阻断主流程） */
+async function writeLog(row) {
+  try {
+    await db.collection(COL_LOGS).add({
+      data: Object.assign({ createTime: Date.now() }, row)
+    })
+  } catch (e) {
+    /* 日志写失败不影响通知 */
+  }
+}
+
+function updateLastNotify(docId, ts) {
+  db.collection(COL_CARS)
+    .doc(docId)
+    .update({ data: { lastNotifyTime: ts } })
+    .catch(() => {})
+}
+
+/* ============================================================
+ * 入口
+ * ============================================================ */
+/**
+ * 不需要用户身份（OPENID）的 action 白名单
+ * ------------------------------------------------------------
+ * 这两类调用方拿不到 OPENID，如果被统一鉴权拦掉会直接 401：
+ *   health        云开发控制台「云端测试」手动运行
+ *   cleanExpired  定时触发器（Cron）自动运行 —— 被拦则过期数据永远清不掉
+ * 除白名单外，其余 action 都必须由小程序端通过 wx.cloud.callFunction 调用。
+ */
+const NO_AUTH_ACTIONS = ['health', 'cleanExpired']
+
+/**
+ * 入参容错解析
+ * ------------------------------------------------------------
+ * 云开发控制台的「云端测试」输入框对 JSON 极其敏感，稍微多一个空格、
+ * 引号被输入法/聊天窗口转成中文引号「" "」，就会在发送前直接报
+ * 「内容不是合法的json」——此时云函数压根没被调用。
+ *
+ * 所以这里做三层兜底，让你能尽量少打字：
+ *   1) event 是字符串（可能被二次序列化过）→ 尝试 JSON.parse，
+ *      失败就把它本身当成 action 名（`health` 也能直接跑）
+ *   2) action 缺失 / 空 / 非字符串 → 默认 health（自检）
+ *   3) 定时触发器（Type === 'Timer'）→ 未显式指定时默认 cleanExpired
+ *
+ * 结果：测试框里填 `{}` 、留空、甚至手写 `health`，都能跑出自检结果。
+ */
+function normalizeEvent(event) {
+  let raw = event
+
+  if (typeof raw === 'string') {
+    const text = raw.trim()
+    try {
+      raw = JSON.parse(text)
+    } catch (e) {
+      // 不是 JSON，就当它是 action 名；空串走默认
+      raw = text ? { action: text } : {}
+    }
+  }
+
+  if (!raw || typeof raw !== 'object') raw = {}
+
+  let action = raw.action
+  if (typeof action === 'string') action = action.trim()
+
+  // 定时触发器：{ Type: 'Timer', TriggerName, Time }
+  const isTimer = raw.Type === 'Timer' || raw.type === 'Timer'
+
+  if (!action) action = isTimer ? 'cleanExpired' : 'health'
+
+  let payload = raw.payload
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload)
+    } catch (e) {
+      payload = {}
+    }
+  }
+  if (!payload || typeof payload !== 'object') payload = {}
+
+  return { action, payload, isTimer }
+}
+
+exports.main = async (event) => {
+  const { action, payload } = normalizeEvent(event)
+  const wxCtx = cloud.getWXContext()
+  const openid = wxCtx.OPENID
+
+  const handler = actions[action]
+  if (!handler) {
+    return fail(`未知的 action：${action}。可用：${Object.keys(actions).join(', ')}`, 404)
+  }
+
+  if (!openid && NO_AUTH_ACTIONS.indexOf(action) === -1) {
+    return fail(
+      `action「${action}」需要用户身份，请用小程序端的 wx.cloud.callFunction 调用；` +
+      `控制台可直调的只有：${NO_AUTH_ACTIONS.join(', ')}`,
+      401
+    )
+  }
+
+  try {
+    return await handler({ openid, payload })
+  } catch (err) {
+    return fail(err.errMsg || err.message || '服务端异常', 500, err.errCode)
+  }
+}

@@ -1,0 +1,132 @@
+<view class="page">
+  <!-- 加载中 -->
+  <view class="empty" wx:if="{{loading}}">
+    <view class="empty__icon">⏳</view>
+    <view class="empty__title">正在识别车辆…</view>
+  </view>
+
+  <!-- 异常 -->
+  <view class="empty" wx:elif="{{errorMsg}}">
+    <view class="empty__icon">🚫</view>
+    <view class="empty__title">{{errorMsg}}</view>
+    <view class="empty__desc">如果反复失败，请联系车主重新生成挪车码</view>
+  </view>
+
+  <!-- 空白码：还没绑定车辆，引导扫码方绑定 -->
+  <view class="card bind-card" wx:elif="{{bound === false}}">
+    <view class="bind-card__icon">📇</view>
+    <view class="bind-card__title">这是一张空白挪车码</view>
+    <view class="bind-card__desc">
+      它还没有绑定任何车辆。填写车牌号和手机号后，别人扫这张码就能微信通知你，或直接拨号联系你。
+    </view>
+
+    <button class="btn btn--primary btn--lg btn--block" bindtap="onBindTap">
+      绑定我的车辆
+    </button>
+
+    <view class="bind-card__tip t-mute">
+      ⚠️ 空白码先到先得：谁先完成绑定这张码就归谁，请确认贴纸在你手上再绑定。
+    </view>
+
+    <view class="foot-link t-mute" bindtap="goHome">我也要一个挪车码 →</view>
+  </view>
+
+  <!-- 正常流程 -->
+  <block wx:else>
+    <!-- 车辆卡片 -->
+    <view class="card car-card">
+      <view class="car-card__label">扫码成功，车辆信息</view>
+      <view class="car-card__plate t-mono {{isNewEnergy ? 'car-card__plate--green' : 'car-card__plate--blue'}}">
+        {{plateFull}}
+      </view>
+      <view class="car-card__tag {{isNewEnergy ? 'car-card__tag--green' : 'car-card__tag--blue'}}">
+        {{isNewEnergy ? '新能源' : '油车'}}
+      </view>
+      <view class="car-card__model t-sub" wx:if="{{carModel}}">{{carModel}}</view>
+    </view>
+
+    <!-- 车主留了手机号：展示号码 + 一键拨打 -->
+    <view class="card phone-card" wx:if="{{hasPhone}}">
+      <view class="phone-card__label">车主电话</view>
+      <view class="phone-card__number t-mono">
+        {{showPlainPhone ? phone : phoneMask}}
+      </view>
+      <view class="phone-card__ops">
+        <button class="btn btn--primary phone-card__btn" bindtap="onCallTap">
+          📞 直接拨打
+        </button>
+        <button class="btn btn--ghost phone-card__btn" bindtap="onCopyPhone">
+          复制号码
+        </button>
+      </view>
+    </view>
+
+    <!-- 车主没留手机号：如实说明，微信通知是唯一通道 -->
+    <view class="card card--flat no-phone" wx:else>
+      <view class="no-phone__icon">🔔</view>
+      <view class="no-phone__text">
+        车主未留手机号，请通过下方「微信通知」联系车主
+      </view>
+    </view>
+
+    <!-- 主操作：微信通知（不暴露号码，优先推荐） -->
+    <button
+      class="btn btn--primary btn--lg btn--block main-btn"
+      disabled="{{notifying || countdown > 0}}"
+      bindtap="onNotify"
+    >
+      <block wx:if="{{countdown > 0}}">{{countdown}} 秒后可再次通知</block>
+      <block wx:elif="{{notifying}}">正在通知…</block>
+      <block wx:else>🔔 微信通知车主</block>
+    </button>
+
+    <view class="privacy-tip t-mute">
+      <block wx:if="{{!hasPhone}}">
+        车主选择不公开手机号，微信通知是唯一联系方式
+      </block>
+      <block wx:elif="{{showPlainPhone}}">
+        号码为公开展示，请勿拍摄传播；微信通知不会泄露号码
+      </block>
+      <block wx:else>
+        🔒 点击拨号时由微信直接呼出，本页不展示完整号码
+      </block>
+    </view>
+
+    <!-- 补充信息 -->
+    <view class="card extra">
+      <view class="extra__title">补充信息（选填）</view>
+
+      <view class="quick">
+        <view
+          class="quick__item {{message === item ? 'quick__item--on' : ''}}"
+          wx:for="{{quickMsgs}}"
+          wx:key="*this"
+          data-text="{{item}}"
+          bindtap="onQuickMsg"
+        >
+          {{item}}
+        </view>
+      </view>
+
+      <textarea
+        class="extra__textarea"
+        placeholder="补充说明，例如：我在地下车库 B2，您的车横占了两个车位"
+        placeholder-class="extra__ph"
+        maxlength="50"
+        value="{{message}}"
+        bindinput="onMessageInput"
+        auto-height
+      />
+      <view class="extra__count t-mute">{{message.length}}/50</view>
+    </view>
+
+    <!-- 结果提示 -->
+    <view class="card card--flat result" wx:if="{{notified && notifyResult !== 'sent'}}">
+      <view class="result__text t-mute">
+        ⚠️ 本次微信通知未送达（{{notifyResult}}），建议直接拨打电话。
+      </view>
+    </view>
+
+    <view class="foot-link t-mute" bindtap="goHome">我也要一个挪车码 →</view>
+  </block>
+</view>

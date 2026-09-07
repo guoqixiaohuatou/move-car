@@ -1,0 +1,231 @@
+/* 模板未就绪提示 */
+.tpl-warn {
+  background: #fffbe6;
+  border-color: #ffe58f;
+  padding: 24rpx 28rpx;
+}
+
+.tpl-warn__title {
+  font-size: 26rpx;
+  font-weight: 600;
+  color: #ad6800;
+  margin-bottom: 8rpx;
+}
+
+.tpl-warn__text {
+  font-size: 24rpx;
+  color: #ad6800;
+  line-height: 1.7;
+}
+
+/* 三步引导 */
+.steps {
+  text-align: left;
+  background: #ffffff;
+  border-radius: 24rpx;
+  padding: 8rpx 32rpx;
+  margin-bottom: 40rpx;
+  box-shadow: 0 2rpx 16rpx rgba(24, 46, 84, 0.06);
+}
+
+.step {
+  display: flex;
+  align-items: flex-start;
+  padding: 28rpx 0;
+  border-bottom: 2rpx solid var(--line);
+}
+
+.step:last-child {
+  border-bottom: none;
+}
+
+.step__no {
+  width: 44rpx;
+  height: 44rpx;
+  line-height: 44rpx;
+  text-align: center;
+  border-radius: 50%;
+  background: var(--brand);
+  color: #ffffff;
+  font-size: 24rpx;
+  font-weight: 600;
+  flex-shrink: 0;
+  margin-right: 20rpx;
+  margin-top: 4rpx;
+}
+
+.step__title {
+  font-size: 28rpx;
+  font-weight: 500;
+  color: var(--text-1);
+}
+
+.step__desc {
+  font-size: 24rpx;
+  color: var(--text-3);
+  margin-top: 4rpx;
+}
+
+.start-btn {
+  width: 100%;
+}
+
+.banner {
+  background: linear-gradient(135deg, #e8f2ff 0%, #f0f7ff 100%);
+  border: none;
+}
+
+.banner__title {
+  font-size: 34rpx;
+  font-weight: 600;
+  color: var(--brand-dark);
+  margin-bottom: 8rpx;
+}
+
+.banner__desc {
+  font-size: 25rpx;
+  color: var(--text-2);
+  line-height: 1.7;
+}
+
+.car {
+  padding-bottom: 24rpx;
+}
+
+.car__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16rpx;
+  padding-bottom: 20rpx;
+  border-bottom: 2rpx solid var(--line);
+}
+
+.car__plate {
+  font-size: 40rpx;
+  font-weight: 600;
+  color: var(--text-1);
+  letter-spacing: 4rpx;
+}
+
+/* ============ 空白挪车码（待绑定） ============ */
+.car--blank {
+  border: 2rpx dashed #ffc069;
+  background: #fffdf8;
+}
+
+.car__plate--blank {
+  font-size: 36rpx;
+  color: var(--text-2);
+  letter-spacing: 2rpx;
+}
+
+.tag--wait {
+  background: #fff7e6;
+  color: #d46b08;
+}
+
+.blank__desc {
+  font-size: 26rpx;
+  color: var(--text-2);
+  line-height: 1.7;
+  padding: 8rpx 0 4rpx;
+}
+
+.blank-entry {
+  margin-top: 32rpx;
+  font-size: 26rpx;
+  line-height: 1.6;
+}
+
+.quota-hint {
+  margin-top: 20rpx;
+  padding: 16rpx 20rpx;
+  background: #fffbe6;
+  border-radius: 12rpx;
+  line-height: 1.6;
+  color: #ad6800;
+}
+
+/* 运行模式开关卡片 */
+.runmode {
+  margin-top: 24rpx;
+  padding: 28rpx 28rpx 24rpx;
+}
+
+.runmode__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.runmode__title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--text-1);
+  margin-bottom: 6rpx;
+}
+
+.runmode__desc {
+  font-size: 24rpx;
+  color: var(--text-2);
+}
+
+.runmode__switch {
+  transform: scale(1.15);
+  transform-origin: right center;
+}
+
+.runmode__hint {
+  margin-top: 16rpx;
+  padding: 14rpx 18rpx;
+  background: #fff7e6;
+  border-radius: 12rpx;
+  font-size: 23rpx;
+  line-height: 1.6;
+  color: #ad6800;
+}
+
+.runmode__hint--mute {
+  background: #f3f5f9;
+  color: var(--text-3);
+}
+
+/* 管理员工具区（复制 openid 等） */
+.admin-tools {
+  margin: 24rpx 24rpx 8rpx;
+}
+
+/* 直接展示 openid：手机剪贴板粘不到电脑，这里可长按选中复制或照抄 */
+.admin-openid {
+  margin-top: 16rpx;
+  padding: 16rpx 20rpx;
+  background: #f3f5f9;
+  border-radius: 12rpx;
+  text-align: center;
+}
+
+.admin-openid__label {
+  display: block;
+  font-size: 24rpx;
+  color: var(--text-3);
+  margin-bottom: 8rpx;
+}
+
+.admin-openid__value {
+  display: block;
+  font-size: 28rpx;
+  color: var(--text-1);
+  word-break: break-all;
+  font-family: 'SFMono-Regular', Consolas, 'Courier New', monospace;
+}
+
+/* 页底隐私政策入口（审核要求易于访问） */
+.policy-entry {
+  margin: 8rpx auto 48rpx;
+  padding: 12rpx 24rpx;
+  font-size: 26rpx;
+  color: var(--text-3);
+  text-align: center;
+  text-decoration: underline;
+}

@@ -1,0 +1,36 @@
+# 依赖
+node_modules/
+cloudfunctions/*/node_modules/
+**/node_modules/
+package-lock.json
+
+# 微信开发者工具「个人」配置（含本机编译设置，不应提交）
+project.private.config.json
+
+# 构建产物 / 缓存
+.miniprogram/
+.unpackage/
+dist/
+build/
+*.tsbuildinfo
+
+# 日志
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# 环境变量 / 密钥（本项目密钥走云函数环境变量，这里仅作保险）
+.env
+.env.*
+!.env.example
+
+# 系统 & 编辑器
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+
+# 微信开发者工具临时目录
+.tmp/
