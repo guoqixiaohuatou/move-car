@@ -254,23 +254,51 @@ Page({
    * 默认 1 张（单人用 / 自印自贴）。需要批量印贴纸时选 2~5 张一次性出。
    * 绑定规则统一是「先到先得」——谁先扫码填车牌，这张码就归谁。
    */
+  /**
+   * 点「＋ 空白挪车码」
+   * ------------------------------------------------------------
+   * 小程序码的版本（体验版 / 正式版）是烧死在图片里的，事后改不了：
+   * 体验版码正式发布后路人扫不开，正式版码发布前扫不开。
+   * 所以正式版还没发布（运行模式为 trial）时，先让管理员选用途，避免印错一批废纸。
+   */
   onBlankTap() {
+    if (!this.data.isRelease) {
+      wx.showModal({
+        title: '生成哪种挪车码？',
+        content:
+          '正式版：现在就能打印贴出，小程序正式发布后扫码即可绑定；发布前扫不开属正常现象。\n\n' +
+          '体验版：现在就能扫码自测绑定流程，但正式发布后这张码会作废，需要重新打印。',
+        cancelText: '体验版（自测）',
+        confirmText: '正式版（打印）',
+        success: (m) => {
+          if (!m.confirm && !m.cancel) return
+          this.pickBlankCount(m.confirm ? 'release' : 'trial')
+        }
+      })
+      return
+    }
+    // 已是正式版运行模式，出的一律是正式版码
+    this.pickBlankCount('release')
+  },
+
+  /** 选生成张数（1~5，与云函数 MAX_BLANK_BATCH 对齐） */
+  pickBlankCount(envVersion) {
     wx.showActionSheet({
       itemList: ['1 张（默认）', '2 张', '3 张', '4 张', '5 张（最多）'],
       success: (res) => {
         const idx = res.tapIndex
         if (typeof idx !== 'number' || idx < 0) return
-        this.generateBlanks(idx + 1)
+        this.generateBlanks(idx + 1, envVersion)
       },
       fail: () => {}
     })
   },
 
   /** 真正调用云函数批量生成 */
-  async generateBlanks(count) {
+  async generateBlanks(count, envVersion) {
     wx.showLoading({ title: `生成 ${count} 张中…`, mask: true })
     try {
-      const r = await app.call('createBlanks', { count })
+      const r = await app.call('createBlanks', { count, envVersion })
       wx.hideLoading()
       const items = r.items || []
       if (items.length === 0) {
@@ -280,7 +308,8 @@ Page({
       // 跳到批量展示页：URL 长度有限（最多 5 张 * ~100B = 500B），
       // 用 encodeURIComponent 包裹 JSON 即可
       const itemsJson = encodeURIComponent(JSON.stringify(items))
-      wx.navigateTo({ url: `/pages/blanks/blanks?items=${itemsJson}` })
+      const env = envVersion || ''
+      wx.navigateTo({ url: `/pages/blanks/blanks?items=${itemsJson}&env=${env}` })
     } catch (err) {
       wx.hideLoading()
       util.toast(err.message || '生成失败')

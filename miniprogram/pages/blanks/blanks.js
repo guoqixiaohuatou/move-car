@@ -1,6 +1,17 @@
 const app = getApp()
 const util = require('../../utils/util.js')
 
+/** 出码版本 → 给管理员的提示文案（版本烧死在图片里，印错就是一批废纸） */
+function envTipOf(env) {
+  if (env === 'release') {
+    return '正式版码：现在就可以打印贴出。小程序正式发布后扫码即可绑定车辆；发布前扫不开属正常现象。'
+  }
+  if (env === 'trial') {
+    return '体验版码：仅供现在自测绑定流程。小程序正式发布后这批码会作废，届时需重新生成并打印。'
+  }
+  return ''
+}
+
 Page({
   data: {
     items: [], // [{ codeId, fileID }]
@@ -23,7 +34,10 @@ Page({
     }
     // 标注序号，方便分发时知道哪张是哪张
     items = items.map((it, idx) => ({ ...it, index: idx + 1 }))
-    this.setData({ items })
+
+    // 出码版本：决定这批贴纸是「现在就能印」还是「只能自测」
+    const env = options.env || (items[0] && items[0].env) || ''
+    this.setData({ items, env, envKind: env, envTip: envTipOf(env) })
   },
 
   /**

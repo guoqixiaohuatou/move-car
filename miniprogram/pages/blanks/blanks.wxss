@@ -29,6 +29,25 @@
   line-height: 1.6;
 }
 
+/* 出码版本提示：正式版绿（可印），体验版橙（会作废） */
+.tip__env {
+  margin-top: 16rpx;
+  padding: 16rpx 20rpx;
+  border-radius: 12rpx;
+  font-size: 24rpx;
+  line-height: 1.6;
+}
+
+.tip__env--release {
+  background: #f0f9eb;
+  color: #2b7a0b;
+}
+
+.tip__env--trial {
+  background: #fff7e6;
+  color: #ad6800;
+}
+
 .save-all {
   margin-bottom: 32rpx;
 }

@@ -417,10 +417,18 @@ function maskPhone(phone) {
  * 云存储路径固定为 wxacode/{codeId}.png —— 同一张码重复生成会直接覆盖，
  * 不会堆积垃圾文件（版本切换后重生成正是依赖这个覆盖行为）。
  *
+ * @param {string} [envOverride] 指定 'release' | 'trial'，不给则跟随当前运行模式。
+ *   典型用途：小程序还在审核、正式版未发布时，管理员想「先把贴纸印出来」，
+ *   此时要强制出 release 码——trial 码在正式发布后路人扫不开，印了等于废纸。
+ *   因为 checkPath 恒为 false，未发布的小程序也能成功生成 release 码。
+ *
  * @returns {Promise<{fileID: string, envVersion: string}>}
  */
-async function buildWxacode(codeId) {
-  const envVersion = runModeConfig(await getRunMode()).envVersion
+async function buildWxacode(codeId, envOverride) {
+  let envVersion = envOverride
+  if (envVersion !== 'release' && envVersion !== 'trial') {
+    envVersion = runModeConfig(await getRunMode()).envVersion
+  }
 
   const wxacodeBuf = await mpGetWxacodeUnlimit({
     scene: codeId, // 最长 32 字符
@@ -755,7 +763,7 @@ const actions = {
     let wxacodeFileID = ''
     let wxacodeEnv = ''
     try {
-      const built = await buildWxacode(newId)
+      const built = await buildWxacode(newId, envOverride)
       wxacodeFileID = built.fileID
       wxacodeEnv = built.envVersion
     } catch (e) {
@@ -792,6 +800,10 @@ const actions = {
    * - 每张码都跑一遍 createBlank 的写入 + 出码逻辑；任何一张失败不影响其他张。
    * - 返回 items 里只保留「写入成功」的码（失败的在 failed 字段计数），
    *   前端展示时直接用返回的 items 数组。
+   *
+   * envVersion（可选）：'release' | 'trial'
+   *   正式版未发布时也能强制出 release 码（checkPath 恒 false），
+   *   供管理员「先印贴纸、发布后扫码绑定」。trial 码发布后会作废。
    */
   async createBlanks({ openid, payload }) {
     // ---- 权限：只有管理员本人能生成空白挪车码 ----
@@ -851,7 +863,7 @@ const actions = {
       }
     }
 
-    return ok({ items, failed, requested: N })
+    return ok({ items, failed, requested: N, env: envOverride || 'auto' })
   },
 
   /**
@@ -1170,6 +1182,13 @@ const actions = {
     const envVersion = runModeConfig(await getRunMode()).envVersion
     if (car.wxacodeFileID && car.wxacodeEnv === envVersion) {
       return ok({ fileID: car.wxacodeFileID, cached: true })
+    }
+
+    // 保护：已经是正式版码，就不再因为运行模式仍是 trial 而降级重生成。
+    // 典型场景——审核期间管理员强制出了 release 空白码并已打印贴出，
+    // 此时打开码页若重生成 trial 码，会覆盖云存储里同一张图，已贴出的贴纸全部作废。
+    if (car.wxacodeFileID && car.wxacodeEnv === 'release' && envVersion === 'trial') {
+      return ok({ fileID: car.wxacodeFileID, cached: true, locked: true })
     }
 
     try {

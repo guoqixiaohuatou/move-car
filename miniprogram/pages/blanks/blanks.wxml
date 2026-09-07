@@ -9,6 +9,9 @@
       ⚠️ 空白码「先到先得」：谁先扫码绑定，这张码就归谁。
       请确认贴纸交到对方手上后再让对方扫码。
     </view>
+    <view class="tip__env tip__env--{{envKind}}" wx:if="{{envTip}}">
+      {{envTip}}
+    </view>
   </view>
 
   <!-- 批量保存 -->
