@@ -1115,10 +1115,14 @@ const actions = {
     if (runMode !== 'trial' && runMode !== 'release') {
       return fail('runMode 只能是 trial 或 release', 400)
     }
-    // 仅名下有车的车主可切换，防止陌生人改动
-    const mine = await db.collection(COL_CARS).where({ _openid: openid }).limit(1).get()
-    if (!mine.data || mine.data.length === 0) {
-      return fail('仅车主本人可切换运行模式', 403)
+    // 仅名下有车的车主可切换，防止陌生人改动。
+    // openid 为空说明来自云开发控制台/定时触发器，调用方本身就是管理员，直接放行
+    // （不能带着 undefined 去查 _openid，会抛错）。
+    if (openid) {
+      const mine = await db.collection(COL_CARS).where({ _openid: openid }).limit(1).get()
+      if (!mine.data || mine.data.length === 0) {
+        return fail('仅车主本人可切换运行模式', 403)
+      }
     }
     try {
       await db.createCollection(COL_SYS)
@@ -1177,7 +1181,19 @@ const actions = {
    */
   async getRunMode() {
     const runMode = await getRunMode()
-    return ok({ runMode, isRelease: runMode === 'release' })
+    // 顺带回传管理员是否已配置，方便在控制台一眼确认（不回传 openid 本身）
+    let adminConfigured = false
+    try {
+      adminConfigured = !!(await getAdminOpenid())
+    } catch (e) {
+      /* 读不到就当未配置 */
+    }
+    return ok({
+      runMode,
+      isRelease: runMode === 'release',
+      adminConfigured,
+      envVersion: runModeConfig(runMode).envVersion
+    })
   },
 
   /** 通知记录 */
@@ -1619,12 +1635,21 @@ function updateLastNotify(docId, ts) {
 /**
  * 不需要用户身份（OPENID）的 action 白名单
  * ------------------------------------------------------------
- * 这两类调用方拿不到 OPENID，如果被统一鉴权拦掉会直接 401：
+ * 这些调用方拿不到 OPENID，如果被统一鉴权拦掉会直接 401：
  *   health        云开发控制台「云端测试」手动运行
  *   cleanExpired  定时触发器（Cron）自动运行 —— 被拦则过期数据永远清不掉
+ *   getRunMode    只读取全局配置，不含任何用户数据
+ *   setRunMode    只写全局配置；控制台调用方本身就是管理员，
+ *                 比小程序里的「名下有车」校验更强，放行是安全的
+ *
+ * 放行后即可在云开发控制台 > 云函数 car > 云端测试里直接切运行模式：
+ *   {"action":"getRunMode","payload":{}}
+ *   {"action":"setRunMode","payload":{"runMode":"release"}}
+ * 小程序发布后不用打开 App 就能切成正式版，也不受多实例缓存影响。
+ *
  * 除白名单外，其余 action 都必须由小程序端通过 wx.cloud.callFunction 调用。
  */
-const NO_AUTH_ACTIONS = ['health', 'cleanExpired']
+const NO_AUTH_ACTIONS = ['health', 'cleanExpired', 'getRunMode', 'setRunMode']
 
 /**
  * 入参容错解析
