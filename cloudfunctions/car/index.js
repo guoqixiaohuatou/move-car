@@ -1124,11 +1124,21 @@ const actions = {
         return fail('仅车主本人可切换运行模式', 403)
       }
     }
+    // steps：把每一步的真实结果都带回去。云端测试里一眼就能定位
+    // 「到底卡在写集合 / 写文档 / 还是回读」，不用靠猜。
+    const steps = []
+    const note = (name, okv, extra) => {
+      steps.push(Object.assign({ step: name, ok: okv }, extra || {}))
+    }
+
     try {
       await db.createCollection(COL_SYS)
+      note('createCollection', true)
     } catch (e) {
-      /* 已存在则忽略 */
+      // 集合已存在也会走这里，属正常
+      note('createCollection', false, { err: (e && (e.errCode || e.message)) || String(e) })
     }
+
     // 必须用 update 而不是 set：set 会覆盖整个 global 文档，
     // 把同一文档里的 adminOpenid（空白码管理员配置）一并清掉。
     try {
@@ -1136,37 +1146,51 @@ const actions = {
         .collection(COL_SYS)
         .doc('global')
         .update({ data: { runMode, updatedAt: Date.now() } })
-      if (!upd || !upd.stats || upd.stats.updated === 0) {
-        await db
-          .collection(COL_SYS)
-          .doc('global')
-          .set({ data: { runMode, updatedAt: Date.now() } })
+      const updated = upd && upd.stats ? upd.stats.updated : -1
+      note('update', updated > 0, { updated })
+      if (updated === 0) {
+        // 文档不存在 → 建一个
+        await db.collection(COL_SYS).doc('global').set({ data: { runMode, updatedAt: Date.now() } })
+        note('set(fallback)', true, { reason: 'update 影响 0 条，文档可能不存在' })
       }
     } catch (e) {
-      await db
-        .collection(COL_SYS)
-        .doc('global')
-        .set({ data: { runMode, updatedAt: Date.now() } })
+      note('update', false, { err: (e && (e.errCode || e.message)) || String(e) })
+      try {
+        await db.collection(COL_SYS).doc('global').set({ data: { runMode, updatedAt: Date.now() } })
+        note('set(catch)', true)
+      } catch (e2) {
+        note('set(catch)', false, { err: (e2 && (e2.errCode || e2.message)) || String(e2) })
+      }
     }
+
     runModeCache = { at: 0, value: null } // 立即失效缓存
 
     // 回读校验：返回「真正落库的值」，而不是我们以为写进去的值。
     // 万一写入因权限/环境异常没生效，开关会立刻回弹成真实状态，而不是假装成功。
     let stored = runMode
+    let readback = 'skipped'
     try {
       const doc = await db.collection(COL_SYS).doc('global').get()
       const raw = doc && doc.data ? doc.data : null
-      if (raw && (raw.runMode === 'release' || raw.runMode === 'trial')) {
+      if (!raw) {
+        readback = 'doc-missing'
+      } else if (raw.runMode === 'release' || raw.runMode === 'trial') {
         stored = raw.runMode
+        readback = 'ok'
+      } else {
+        readback = 'invalid:' + String(raw.runMode)
       }
     } catch (e) {
-      /* 读不到就按写入值返回 */
+      readback = 'error:' + ((e && (e.errCode || e.message)) || 'unknown')
     }
+    note('readback', readback === 'ok', { readback, stored })
 
     return ok({
       runMode: stored,
       isRelease: stored === 'release',
       persisted: stored === runMode,
+      readback,
+      steps,
       hint:
         stored === 'release'
           ? '已切到正式版：新生成的码路人可扫开。旧码无需手动删除，下次打开挪车码页会自动重生成。'
@@ -1179,8 +1203,35 @@ const actions = {
    * ------------------------------------------------------------
    * 读取无需 owner 权限，任何已登录用户都能查；写（setRunMode）才需要车主身份。
    */
+  /**
+   * 读取运行模式（带自诊断）
+   * ------------------------------------------------------------
+   * 除了 mode 本身，还回传 source 说明这个值是从哪来的 —— 排查
+   * 「明明切了正式版，读回来还是体验版」时，一眼就能分清是
+   * 库里没写进去、写进去但字段不合法、还是压根读不到这个集合。
+   */
   async getRunMode() {
     const runMode = await getRunMode()
+
+    // 独立再读一次原始文档，只为诊断，不复用上面的缓存/回退逻辑
+    let source = 'unknown'
+    let rawRunMode = null
+    try {
+      const doc = await db.collection(COL_SYS).doc('global').get()
+      const raw = (doc && doc.data) || null
+      if (!raw) {
+        source = 'doc-missing' // 集合在，但 global 文档不存在
+      } else if (raw.runMode === 'release' || raw.runMode === 'trial') {
+        source = 'db'
+        rawRunMode = raw.runMode
+      } else {
+        source = 'db-invalid' // 字段存在但值不合法 → 代码回退成默认 trial
+        rawRunMode = raw.runMode === undefined ? null : String(raw.runMode)
+      }
+    } catch (e) {
+      source = 'read-error:' + ((e && (e.errCode || e.message)) || 'unknown')
+    }
+
     // 顺带回传管理员是否已配置，方便在控制台一眼确认（不回传 openid 本身）
     let adminConfigured = false
     try {
@@ -1188,11 +1239,15 @@ const actions = {
     } catch (e) {
       /* 读不到就当未配置 */
     }
+
     return ok({
       runMode,
       isRelease: runMode === 'release',
       adminConfigured,
-      envVersion: runModeConfig(runMode).envVersion
+      envVersion: runModeConfig(runMode).envVersion,
+      source,
+      rawRunMode,
+      expect: { collection: COL_SYS, docId: 'global', field: 'runMode' }
     })
   },
 
