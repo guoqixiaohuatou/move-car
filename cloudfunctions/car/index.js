@@ -48,7 +48,11 @@ const DEFAULT_RUN_MODE = 'trial'
 
 /* 运行模式缓存（进程内复用 60 秒；setRunMode 会立即失效，确保切换即时生效） */
 let runModeCache = { at: 0, value: null }
-const RUNMODE_TTL = 60 * 1000
+// ⚠️ 刻意设为 0：运行模式**不做进程内缓存**，每次都读库。
+// 云函数是多实例（多容器）并发运行的，setRunMode 只能清掉「处理写入的那个实例」的缓存，
+// 其他实例仍会把旧值吐出来 —— 表现就是「开关切到正式版，重新进小程序又变回体验版」。
+// 运行模式直接决定码是正式版还是体验版，读到旧值 = 印一批废纸。宁可多一次读库也要拿最新值。
+const RUNMODE_TTL = 0
 
 /** 读取当前生效的运行模式；数据库优先，读取失败回退默认值，绝不阻断业务 */
 async function getRunMode() {
@@ -81,7 +85,9 @@ async function getRunMode() {
    * 带进程内缓存，避免每次生成都读库。
    */
   let adminOpenidCache = { at: 0, value: undefined }
-  const ADMIN_TTL = 5 * 60 * 1000
+  // 同样受多实例缓存影响（认领管理员后别的实例可能仍是旧值），
+  // 但管理员极少变动，30s 足够短，也避免每次进首页都读库。
+  const ADMIN_TTL = 30 * 1000
   async function getAdminOpenid() {
     const now = Date.now()
     if (adminOpenidCache.at && now - adminOpenidCache.at < ADMIN_TTL) {
@@ -448,6 +454,17 @@ async function buildWxacode(codeId, envOverride) {
   return { fileID: up.fileID, envVersion }
 }
 
+/**
+ * 规范化「出码版本」入参
+ * ------------------------------------------------------------
+ * 只认 'release' / 'trial'，其余一律返回 undefined（= 跟随当前运行模式）。
+ * 集中在这里校验，避免调用方直接引用未声明变量导致 ReferenceError
+ * ——曾出现过 return 语句里用到未定义的 envOverride，码已入库却整段报错的情况。
+ */
+function normalizeEnv(v) {
+  return v === 'release' || v === 'trial' ? v : undefined
+}
+
 /** 按微信订阅消息字段类型截断，避免 47003 */
 function clip(value, fieldKey) {
   let v = String(value === undefined || value === null ? '' : value)
@@ -750,7 +767,8 @@ const actions = {
    * 典型用法：生成码 → 打印成贴纸 → 贴到车上（或转送他人）→ 扫码绑定车辆。
    * 这样一张贴纸可以先印刷、后绑定，不必提前知道车牌号。
    */
-  async createBlank({ openid }) {
+  async createBlank({ openid, payload }) {
+    const envOverride = normalizeEnv(payload && payload.envVersion)
     let newId = genCodeId()
     for (let i = 0; i < 5; i++) {
       const dup = await db.collection(COL_CARS).where({ codeId: newId }).count()
@@ -815,6 +833,8 @@ const actions = {
     const count = Math.max(1, parseInt(payload && payload.count, 10) || 1)
     const MAX_BLANK_BATCH = 5 // 与前端选数上限对齐；改这里同步改前端
     const N = Math.min(count, MAX_BLANK_BATCH)
+    // 出码版本：前端弹窗选的「正式版（打印）/ 体验版（自测）」，不传则跟随运行模式
+    const envOverride = normalizeEnv(payload && payload.envVersion)
 
     const items = []
     let failed = 0
@@ -832,7 +852,7 @@ const actions = {
       let wxacodeFileID = ''
       let wxacodeEnv = ''
       try {
-        const built = await buildWxacode(newId)
+        const built = await buildWxacode(newId, envOverride)
         wxacodeFileID = built.fileID
         wxacodeEnv = built.envVersion
       } catch (e) {
@@ -857,7 +877,7 @@ const actions = {
             lastNotifyTime: 0
           }
         })
-        items.push({ codeId: newId, fileID: wxacodeFileID, bound: false })
+        items.push({ codeId: newId, fileID: wxacodeFileID, bound: false, env: wxacodeEnv })
       } catch (e) {
         failed++
       }
@@ -1125,12 +1145,27 @@ const actions = {
         .set({ data: { runMode, updatedAt: Date.now() } })
     }
     runModeCache = { at: 0, value: null } // 立即失效缓存
+
+    // 回读校验：返回「真正落库的值」，而不是我们以为写进去的值。
+    // 万一写入因权限/环境异常没生效，开关会立刻回弹成真实状态，而不是假装成功。
+    let stored = runMode
+    try {
+      const doc = await db.collection(COL_SYS).doc('global').get()
+      const raw = doc && doc.data ? doc.data : null
+      if (raw && (raw.runMode === 'release' || raw.runMode === 'trial')) {
+        stored = raw.runMode
+      }
+    } catch (e) {
+      /* 读不到就按写入值返回 */
+    }
+
     return ok({
-      runMode,
-      isRelease: runMode === 'release',
+      runMode: stored,
+      isRelease: stored === 'release',
+      persisted: stored === runMode,
       hint:
-        runMode === 'release'
-          ? '已切到正式版：路人可扫开，但需先完成 ICP 备案并正式发布小程序'
+        stored === 'release'
+          ? '已切到正式版：新生成的码路人可扫开。旧码无需手动删除，下次打开挪车码页会自动重生成。'
           : '已切回体验版：仅体验成员能扫开挪车码'
     })
   },

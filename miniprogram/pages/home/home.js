@@ -159,13 +159,31 @@ Page({
       const r = await app.call('setRunMode', { runMode: mode })
       this.setData({ isRelease: !!r.isRelease })
       wx.hideLoading()
+
+      // 写入没真正落库（回读校验失败）：明确告警，别让用户以为切成功了。
+      // persisted 字段是新版云函数才返回的，老版本为 undefined，不会误触发。
+      if (r.persisted === false) {
+        wx.showModal({
+          title: '切换未生效',
+          content:
+            '已尝试写入，但回读到的运行模式仍是「' +
+            (r.isRelease ? '正式版' : '体验版') +
+            '」。请到云开发控制台确认 sys_config/global 文档可正常写入，然后重试。',
+          showCancel: false,
+          confirmText: '知道了'
+        })
+        return
+      }
+
       util.toast(r.hint || (r.isRelease ? '已切到正式版' : '已切回体验版'), 'success')
-      // 旧码指向旧版本，必须重新生成才生效
+      // 版本是烧在码图里的：新码自动用新版本，旧码需打开码页自动重生成
       wx.showModal({
-        title: '记得重新生成挪车码',
+        title: '挪车码需要更新',
         content:
-          '运行模式已切换，但旧的挪车码仍指向旧版本。请到「查看挪车码」页删除并重新生成，' +
-          '路人才/体验成员才能扫开新码。',
+          '小程序码的版本是烧在图片里的，切换后：\n\n' +
+          '· 之后新建的码 → 直接是新版本\n' +
+          '· 已有的码 → 打开「查看挪车码」页会自动重生成\n' +
+          '· 已打印贴出去的贴纸 → 必须重新生成并重新打印',
         showCancel: false,
         confirmText: '知道了'
       })
