@@ -1967,41 +1967,51 @@ const actions = {
    * 必须同时看到「这次实际发了什么字段」+「微信回了什么」。
    * notify 里已把 sentData / errCode / errMsg 落进 notify_logs，这里开一个只读出口。
    *
+   * 注意：notify_logs 里混着两类记录 —— type:'notify'（通知发送）和 type:'view'（扫码查看，
+   * status 恒为 'ok'）。默认只查 notify，否则扫码记录会被误算成「通知失败」。
+   *
    * 控制台云端测试：{"action":"notifyLogs","payload":{"limit":20}}
+   * 想连扫码记录一起看：{"action":"notifyLogs","payload":{"type":"all"}}
    * 只返回诊断信息，不含车主手机号。
    */
   async notifyLogs({ payload }) {
     const limit = Math.min(Math.max(parseInt(payload.limit, 10) || 20, 1), 50)
-    const res = await db
-      .collection(COL_LOGS)
+    const onlyNotify = payload.type !== 'all'
+    const query = db.collection(COL_LOGS)
+    const res = await (onlyNotify ? query.where({ type: 'notify' }) : query)
       .orderBy('createTime', 'desc')
       .limit(limit)
       .get()
 
     const rows = (res.data || []).map((r) => ({
       time: cnTime(r.createTime),
+      type: r.type || '',
       codeId: r.codeId || '',
       status: r.status || '',
       errCode: r.errCode === undefined ? null : r.errCode,
       errMsg: r.errMsg || '',
       message: String(r.message || '').slice(0, 40),
       sentData: r.sentData || null,
+      legacy: !r.sentData && !r.errCode && !r.errMsg && r.status !== 'sent' && r.status !== 'ok',
       fromOpenid: r.fromOpenid
         ? r.fromOpenid.slice(0, 6) + '…' + r.fromOpenid.slice(-4)
         : ''
     }))
 
-    const failed = rows.filter((r) => r.status !== 'sent')
+    const failed = rows.filter((r) => r.status !== 'sent' && r.status !== 'ok')
     let hint = `最近 ${rows.length} 条通知全部发送成功。`
     if (failed.length) {
       const f = failed[0]
       hint =
-        `最近一次失败：status=${f.status} errCode=${f.errCode} errMsg=${f.errMsg}。` +
-        '对照 sentData 里的字段值与你模板的字段类型逐个核对（car_number 不接受 *，' +
-        'phone_number 必须是完整号码，thing 不超过 20 字符）。改完云函数必须重新部署才生效。'
+        f.legacy
+          ? `最近一次失败：status=${f.status}，但这条是旧代码写的（没有 errCode/errMsg/sentData），`
+            + '看不到微信原始报错。请用当前代码再发一次通知，新记录的 sentData 会带上实发字段、errMsg 会带上微信原话。'
+          : `最近一次失败：status=${f.status} errCode=${f.errCode} errMsg=${f.errMsg}。`
+            + '对照 sentData 里的字段值与你模板的字段类型逐个核对（car_number 不接受 *，'
+            + 'phone_number 必须是完整号码，thing 不超过 20 字符）。改完云函数必须重新部署才生效。'
     }
 
-    return ok({ total: rows.length, failed: failed.length, hint, rows })
+    return ok({ scope: onlyNotify ? 'notify' : 'all', total: rows.length, failed: failed.length, hint, rows })
   },
 
   /**
