@@ -2371,6 +2371,116 @@ const actions = {
         detail: err.errMsg || err.message
       })
     }
+  },
+
+  /**
+   * 自助测试通知（车主点一下，立刻知道自己能不能收到）
+   * ------------------------------------------------------------
+   * 排查 47003 最大的成本是「每次都得找第二个人扫码」，而失败记录还常常是
+   * 旧代码写的、看不到微信原话。这里让车主一个人闭环：用自己名下任意一辆车，
+   * 走与线上完全相同的渲染逻辑真发一条给自己。
+   *
+   * 额度为 0 时也照发 —— 43101 说明是额度/拒收问题，47003 才是字段问题，
+   * 这样两种失败一次就能分清，不必反复猜。
+   */
+  async notifyTest({ openid, payload }) {
+    const { codeId } = payload || {}
+    const where = codeId ? { codeId, _openid: openid } : { _openid: openid }
+    const got = await db.collection(COL_CARS).where(where).limit(1).get()
+    const car = got.data[0]
+
+    if (!car) return fail('没找到你的车辆，请先在小程序里绑定一张挪车码', 404)
+
+    let tpl = null
+    try {
+      tpl = await resolveTemplate()
+    } catch (e) {
+      tpl = null
+    }
+    if (!tpl || !tpl.templateId) {
+      return fail('未找到可用的通知模板，请到公众平台 > 功能 > 订阅消息 > 公共模板库选用「挪车」模板', 400)
+    }
+
+    const now = Date.now()
+    const data = renderTemplateData(tpl.dataMap, {
+      // 与正式发送保持一致：完整车牌、完整手机号
+      plate: car.plate || '',
+      plateMask: maskPlate(car.plate),
+      message: '这是一条挪车通知测试，收到即代表链路正常',
+      time: cnTime(now),
+      carModel: car.carModel || '车辆',
+      phone: car.phone || '',
+      phoneMask: maskPhone(car.phone)
+    })
+
+    const cfg = runModeConfig(await getRunMode())
+    const quotaBefore = car.quota || 0
+
+    try {
+      const r = await mpSendSubscribe({
+        touser: car._openid,
+        page: TEMPLATE.page,
+        data,
+        templateId: tpl.templateId,
+        miniprogramState: cfg.miniprogramState
+      })
+
+      if (quotaBefore > 0) {
+        await db.collection(COL_CARS).doc(car._id).update({ data: { quota: _.inc(-1) } })
+      }
+
+      await writeLog({
+        codeId: car.codeId,
+        fromOpenid: openid,
+        type: 'notify',
+        status: 'sent',
+        message: '[自助测试] 通知链路自检',
+        sentData: data
+      })
+
+      return ok({
+        delivered: true,
+        quotaLeft: Math.max(quotaBefore - 1, 0),
+        miniprogramState: cfg.miniprogramState,
+        sentData: data,
+        wxResult: r || null,
+        message: '已发送，去微信「服务通知」里查看'
+      })
+    } catch (err) {
+      const raw = String(err.errMsg || err.message || '')
+
+      await writeLog({
+        codeId: car.codeId,
+        fromOpenid: openid,
+        type: 'notify',
+        status: 'test_failed',
+        message: '[自助测试] 通知链路自检',
+        errCode: err.errCode || null,
+        errMsg: raw.slice(0, 200),
+        sentData: data
+      })
+
+      // 清缓存，下次重新拉模板（模板在后台被改过时会命中旧数据）
+      tplCache = { at: 0, value: null }
+
+      let tip = '发送失败：' + raw
+      if (err.errCode === 43101) {
+        tip = '微信返回 43101：你没有该模板的订阅额度（或已取消接收）。先点上面的「开启微信通知」授权一次，再来测。'
+      } else if (err.errCode === 47003) {
+        tip = '微信返回 47003：字段值不合法。对照上面「实际发出的字段」与公众平台模板里的字段类型逐个核对。'
+      } else if (err.errCode === 48001) {
+        tip = '微信返回 48001：小程序未开通订阅消息能力，请到公众平台检查。'
+      }
+
+      return ok({
+        delivered: false,
+        errCode: err.errCode || null,
+        errMsg: raw,
+        miniprogramState: cfg.miniprogramState,
+        sentData: data,
+        tip
+      })
+    }
   }
 }
 

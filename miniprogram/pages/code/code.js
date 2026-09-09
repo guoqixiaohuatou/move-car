@@ -14,7 +14,8 @@ Page({
     // 统一通知模板是否就绪（null = 还没查过）
     tplReady: null,
     quota: 0,
-    subscribing: false
+    subscribing: false,
+    testing: false
   },
 
   onLoad(options) {
@@ -112,6 +113,55 @@ Page({
         }
       }
     })
+  },
+
+  /**
+   * 自助测试：给自己真发一条通知
+   * ------------------------------------------------------------
+   * 排查 47003 最贵的成本是「每次都要找第二个人扫码」，而失败记录还常常
+   * 是旧代码写的、看不到微信原话。这里一个人就能闭环：发完直接把结果
+   * （含微信原始 errCode / errMsg / 实发字段）弹出来。
+   */
+  async onTestNotify() {
+    if (this.data.testing) return
+    this.setData({ testing: true })
+
+    try {
+      const r = await app.call('notifyTest', { codeId: this.data.codeId })
+
+      if (r.delivered) {
+        wx.showModal({
+          title: '已发出 ✅',
+          content: '去微信的「服务通知」里看是否收到。收到就代表整条链路正常。',
+          showCancel: false
+        })
+        this.setData({ quota: r.quotaLeft })
+        return
+      }
+
+      // 失败：把微信原始报错 + 实发字段摊开，方便直接定位
+      const sent = r.sentData
+        ? Object.keys(r.sentData)
+            .map((k) => `${k} = ${r.sentData[k].value}`)
+            .join('\n')
+        : '（无）'
+
+      wx.showModal({
+        title: `发送失败 ${r.errCode || ''}`.trim(),
+        content:
+          `微信原话：${r.errMsg || '（空）'}\n\n${r.tip || ''}\n\n` +
+          `本次实际发出的字段：\n${sent}`,
+        showCancel: false
+      })
+    } catch (err) {
+      wx.showModal({
+        title: '调用失败',
+        content: err.message || '请确认云函数 car 已重新部署（新增了 notifyTest）',
+        showCancel: false
+      })
+    } finally {
+      this.setData({ testing: false })
+    }
   },
 
   /** 保存小程序码到相册 */

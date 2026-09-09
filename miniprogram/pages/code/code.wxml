@@ -34,6 +34,19 @@
       <view class="t-mute quota__tip">
         每次授权可累积 1 次通知额度。弹窗里勾选「总是保持以上选择」后，以后进小程序会自动补额度。
       </view>
+
+      <!-- 自助排障：一个人就能验证整条通知链路 -->
+      <button
+        class="btn btn--ghost btn--block"
+        style="margin-top:16rpx"
+        disabled="{{testing}}"
+        bindtap="onTestNotify"
+      >
+        {{testing ? '发送中…' : '发一条测试通知给我自己'}}
+      </button>
+      <view class="t-mute quota__tip">
+        用完全相同的线上逻辑真发一条。收到 = 链路正常；收不到会直接把微信原始报错显示出来。
+      </view>
     </view>
   </view>
 
