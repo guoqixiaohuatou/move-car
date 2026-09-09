@@ -1350,6 +1350,113 @@ const actions = {
   },
 
   /**
+   * 干跑自检：不扫码就知道「这张码现在扫了会发生什么」
+   * ------------------------------------------------------------
+   * 小程序一旦提审，改一个字都要再走一遍审核；而真正的问题（码是体验版、
+   * 没绑定、额度为 0、码图版本和运行模式不一致）在扫码前就能全部算出来。
+   *
+   * 云端测试用法：
+   *   {"action":"dryrun","payload":{}}                      → 只做全局环境自检
+   *   {"action":"dryrun","payload":{"codeId":"xxxxxxxx"}}   → 单张码完整诊断
+   *
+   * 返回 verdict 是一句人话结论，直接照做即可，不用解读原始字段。
+   */
+  async dryrun({ payload }) {
+    const { codeId } = payload || {}
+    const runMode = await getRunMode()
+    const cfg = runModeConfig(runMode)
+
+    let templateReady = false
+    let templateTitle = ''
+    let templateHint = ''
+    try {
+      const tpl = await resolveTemplate()
+      templateReady = !!tpl
+      templateTitle = (tpl && tpl.title) || ''
+    } catch (e) {
+      templateHint = e.errMsg || e.message || String(e)
+    }
+
+    let adminConfigured = false
+    try {
+      adminConfigured = !!(await getAdminOpenid())
+    } catch (e) {
+      /* 读不到当未配置 */
+    }
+
+    const out = {
+      runMode,
+      envVersion: cfg.envVersion,
+      miniprogramState: cfg.miniprogramState,
+      adminConfigured,
+      templateReady,
+      templateTitle,
+      templateHint,
+      code: null,
+      envMatch: null,
+      verdict: ''
+    }
+
+    if (!codeId) {
+      out.verdict =
+        `当前出码版本=${cfg.envVersion}。` +
+        (cfg.envVersion === 'release'
+          ? '新生成的码是正式版，任何微信用户可扫（前提是小程序已发布）。'
+          : '新生成的码是体验版，只有体验成员能扫开 —— 想让路人扫开请切 release。') +
+        '带上 codeId 可单独诊断某张码。'
+      return ok(out)
+    }
+
+    const res = await db.collection(COL_CARS).where({ codeId }).limit(1).get()
+    if (res.data.length === 0) {
+      out.verdict = `codeId ${codeId} 在数据库里不存在 → 扫码会提示「挪车码无效」。`
+      return ok(out)
+    }
+
+    const car = res.data[0]
+    const bound = car.bound !== false && !!car.plate
+    out.code = {
+      codeId: car.codeId,
+      bound,
+      plate: car.plate || '',
+      phoneSet: !!car.phone,
+      enabled: car.enabled !== false,
+      quota: car.quota || 0,
+      wxacodeEnv: car.wxacodeEnv || '(未记录)',
+      wxacodeFileID: car.wxacodeFileID || ''
+    }
+
+    const imgEnv = car.wxacodeEnv || ''
+    out.envMatch = imgEnv === cfg.envVersion
+
+    let verdict
+    if (!bound) {
+      verdict = '空白码（尚未绑定车辆）→ 扫码后引导绑定车辆。'
+    } else if (out.code.enabled === false) {
+      verdict = '该码已停用 → 扫码会提示车主已关闭通知。'
+    } else if (out.code.quota <= 0) {
+      verdict =
+        '能打开，但通知额度为 0 → 点「通知车主」会失败。请车主进小程序首页授权订阅消息累积额度。'
+    } else if (!templateReady) {
+      verdict = '能打开，但订阅消息模板未就绪 → 通知发不出去。'
+    } else {
+      verdict = `正常：绑定了 ${out.code.plate}，剩余额度 ${out.code.quota} 次，扫码可通知车主。`
+    }
+
+    if (imgEnv && imgEnv !== cfg.envVersion) {
+      verdict +=
+        ` ⚠️ 但这张图是「${imgEnv}」版本，当前运行模式要求「${cfg.envVersion}」 → ` +
+        '版本不一致，扫出来的不是你期望的那个版本，需要重新生成这张码。'
+    }
+    if (!car.wxacodeFileID) {
+      verdict += ' ⚠️ 这张码还没出过图（wxacodeFileID 为空），需要重新生成。'
+    }
+
+    out.verdict = verdict
+    return ok(out)
+  },
+
+  /**
    * 清理过期数据（由定时触发器调用，不需要前端调用）
    * ------------------------------------------------------------
    * 删除超过保留期的通知记录，兑现隐私政策里的留存承诺。
@@ -1724,6 +1831,8 @@ function updateLastNotify(docId, ts) {
  *   getRunMode    只读取全局配置，不含任何用户数据
  *   setRunMode    只写全局配置；控制台调用方本身就是管理员，
  *                 比小程序里的「名下有车」校验更强，放行是安全的
+ *   dryrun        只读诊断：不扫码就预判某张码扫了会发生什么，
+ *                 返回的是结论性文案，不额外暴露车主手机号
  *
  * 放行后即可在云开发控制台 > 云函数 car > 云端测试里直接切运行模式：
  *   {"action":"getRunMode","payload":{}}
@@ -1732,7 +1841,7 @@ function updateLastNotify(docId, ts) {
  *
  * 除白名单外，其余 action 都必须由小程序端通过 wx.cloud.callFunction 调用。
  */
-const NO_AUTH_ACTIONS = ['health', 'cleanExpired', 'getRunMode', 'setRunMode']
+const NO_AUTH_ACTIONS = ['health', 'cleanExpired', 'getRunMode', 'setRunMode', 'dryrun']
 
 /**
  * 入参容错解析

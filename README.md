@@ -353,6 +353,8 @@ const MANUAL = {
 
      查当前模式填 `{"action":"getRunMode","payload":{}}`，会回传 `runMode` / `isRelease` / `envVersion` / `adminConfigured`。
      这两个 action 已加入**免登录白名单**，控制台可直调，不受「名下有车」限制、也不受多实例缓存影响。
+   - **不想每次都靠「提审 → 发布」来验证**：见 [免审核测试方案.md](./免审核测试方案.md)。
+     其中 `{"action":"dryrun","payload":{"codeId":"xxx"}}` 可以不扫码就预判这张码扫了会发生什么（是否绑定、额度、码图版本与运行模式是否一致）。
    - **方式 C（控制台改数据库）**：云开发控制台 →「数据库」→ 新建集合 `sys_config` → 新增文档 `_id="global"`、字段 `runMode="release"`。
 6. 回到小程序，**删除旧车辆重新添加**，让挪车码按正式版重新生成（旧码是体验版的，扫不开）
 
