@@ -1943,7 +1943,7 @@ const actions = {
       hint =
         '字段 key、数量、值格式全部通过体检。若线上仍报 47003，注意本接口用的是**当前这次部署的代码**去取值：' +
         '确认已重新部署过云函数（旧代码可能仍在给脱敏值），' +
-        '并到数据库 car_logs 里看失败记录的 errCode / errMsg（现已记录微信原始报错）。'
+        '并到数据库集合 notify_logs 里按 createTime 倒序看失败记录（status 非 sent）的 errCode / errMsg / sentData（现已记录微信原始报错与实发字段）。'
     }
     return ok({
       found: true,
@@ -1958,6 +1958,50 @@ const actions = {
       valueAudit,
       hint
     })
+  },
+
+  /**
+   * 最近通知日志（排障用，免登录可直调）
+   * ------------------------------------------------------------
+   * 47003 / 43101 这类错误，光看「通知没送到」永远查不出原因，
+   * 必须同时看到「这次实际发了什么字段」+「微信回了什么」。
+   * notify 里已把 sentData / errCode / errMsg 落进 notify_logs，这里开一个只读出口。
+   *
+   * 控制台云端测试：{"action":"notifyLogs","payload":{"limit":20}}
+   * 只返回诊断信息，不含车主手机号。
+   */
+  async notifyLogs({ payload }) {
+    const limit = Math.min(Math.max(parseInt(payload.limit, 10) || 20, 1), 50)
+    const res = await db
+      .collection(COL_LOGS)
+      .orderBy('createTime', 'desc')
+      .limit(limit)
+      .get()
+
+    const rows = (res.data || []).map((r) => ({
+      time: cnTime(r.createTime),
+      codeId: r.codeId || '',
+      status: r.status || '',
+      errCode: r.errCode === undefined ? null : r.errCode,
+      errMsg: r.errMsg || '',
+      message: String(r.message || '').slice(0, 40),
+      sentData: r.sentData || null,
+      fromOpenid: r.fromOpenid
+        ? r.fromOpenid.slice(0, 6) + '…' + r.fromOpenid.slice(-4)
+        : ''
+    }))
+
+    const failed = rows.filter((r) => r.status !== 'sent')
+    let hint = `最近 ${rows.length} 条通知全部发送成功。`
+    if (failed.length) {
+      const f = failed[0]
+      hint =
+        `最近一次失败：status=${f.status} errCode=${f.errCode} errMsg=${f.errMsg}。` +
+        '对照 sentData 里的字段值与你模板的字段类型逐个核对（car_number 不接受 *，' +
+        'phone_number 必须是完整号码，thing 不超过 20 字符）。改完云函数必须重新部署才生效。'
+    }
+
+    return ok({ total: rows.length, failed: failed.length, hint, rows })
   },
 
   /**
@@ -2360,7 +2404,7 @@ function updateLastNotify(docId, ts) {
  *
  * 除白名单外，其余 action 都必须由小程序端通过 wx.cloud.callFunction 调用。
  */
-const NO_AUTH_ACTIONS = ['health', 'cleanExpired', 'getRunMode', 'setRunMode', 'dryrun', 'templateInspect']
+const NO_AUTH_ACTIONS = ['health', 'cleanExpired', 'getRunMode', 'setRunMode', 'dryrun', 'templateInspect', 'notifyLogs']
 
 /**
  * 入参容错解析
