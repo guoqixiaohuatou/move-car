@@ -512,6 +512,30 @@ function clip(value, fieldKey) {
   return v.length > max ? v.slice(0, max) : v
 }
 
+/**
+ * 按微信字段类型净化取值（47003 的头号元凶）
+ * ------------------------------------------------------------
+ * 微信对部分字段类型有字符集限制，光截断长度不够：
+ *   car_number   8 位以内，首末位可为汉字，其余必须是字母或数字
+ *                → 脱敏车牌「京A****5」里的 * 属于非法字符，直接 47003
+ *   phone_number 17 位以内，仅数字与 + -
+ *                → 脱敏手机号「138****8888」同理会被拒
+ * 脱敏值只该出现在日志和后台列表，绝不能进订阅消息：
+ * 订阅消息的接收方 touser 就是车主本人（car._openid），给车主看自己的完整号码没有隐私问题。
+ */
+function sanitizeValue(value, fieldKey) {
+  let v = String(value === undefined || value === null ? '' : value)
+  const type = (fieldKey.match(/^[a-z_]+/) || [''])[0]
+  if (type === 'car_number') {
+    v = v.replace(/[^0-9A-Za-z\u4e00-\u9fa5]/g, '')
+    if (!v) v = '车辆'
+  } else if (type === 'phone_number') {
+    v = v.replace(/[^0-9+-]/g, '')
+    if (!v) v = '无'
+  }
+  return v
+}
+
 /* ============================================================
  * 模板自动发现
  * ============================================================ */
@@ -548,7 +572,8 @@ const TYPE_RULES = {
   time: 'time',
   date: 'time',
   car_number: 'plate',
-  phone_number: 'phoneMask',
+  // 订阅消息发给车主本人，给完整号码（脱敏值会被 47003 拒收）
+  phone_number: 'phone',
   thing: 'message',
   character_string: 'plate',
   name: 'carModel'
@@ -621,7 +646,11 @@ async function resolveTemplate() {
         templateId: MANUAL.templateId,
         title: '（手动指定）',
         content: '',
-        fields: Object.keys(MANUAL.data).map((key) => ({ key, label: key })),
+        fields: Object.keys(MANUAL.data).map((key) => ({
+          key,
+          type: (key.match(/^[a-z_]+/) || [])[0],
+          label: key
+        })),
         dataMap,
         source: 'manual'
       }
@@ -637,7 +666,7 @@ async function resolveTemplate() {
       templateId: MANUAL.templateId,
       title: tpl.title || '（手动指定）',
       content: tpl.content || '',
-      fields: fields.map((f) => ({ key: f.key, label: f.label })),
+      fields: fields.map((f) => ({ key: f.key, type: f.type, label: f.label })),
       dataMap: buildDataMap(fields),
       source: 'manual'
     }
@@ -659,7 +688,7 @@ async function resolveTemplate() {
     templateId: tpl.priTmplId,
     title: tpl.title || '',
     content: tpl.content || '',
-    fields: fields.map((f) => ({ key: f.key, label: f.label })),
+    fields: fields.map((f) => ({ key: f.key, type: f.type, label: f.label })),
     dataMap: buildDataMap(fields),
     source: 'auto'
   }
@@ -674,7 +703,7 @@ function renderTemplateData(dataMap, ctx) {
   Object.keys(dataMap || {}).forEach((key) => {
     const src = dataMap[key]
     const value = ctx[src] === undefined ? '' : ctx[src]
-    out[key] = { value: clip(value, key) }
+    out[key] = { value: clip(sanitizeValue(value, key), key) }
   })
   return out
 }
@@ -1865,11 +1894,12 @@ const actions = {
       })
     }
     const ctx = {
-      plate: maskPlate('京A12345'),
+      plate: '京A12345',
       plateMask: maskPlate('京A12345'),
       message: DEFAULT_MESSAGE,
       time: cnTime(Date.now()),
       carModel: '白色SUV',
+      phone: '13812348888',
       phoneMask: maskPhone('13812348888')
     }
     const data = renderTemplateData(tpl.dataMap, ctx)
@@ -1877,6 +1907,22 @@ const actions = {
     const has = Object.keys(data).sort()
     const missing = need.filter((k) => !has.includes(k))
     const extra = has.filter((k) => !need.includes(k))
+
+    // 逐字段体检「值」是否合微信字符集规则（key 对了但值不合法同样 47003）
+    const valueAudit = (tpl.fields || []).map((f) => {
+      const v = (data[f.key] && data[f.key].value) || ''
+      const t = f.type || (f.key.match(/^[a-z_]+/) || [''])[0]
+      let note = ''
+      if (!v) note = '⚠️ 值为空，微信会判 47003'
+      else if (t === 'car_number' && !/^[0-9A-Za-z\u4e00-\u9fa5]+$/.test(v))
+        note = '⚠️ 含非法字符（car_number 只允许汉字/字母/数字，脱敏的 * 不行）'
+      else if (t === 'phone_number' && !/^[0-9+-]+$/.test(v))
+        note = '⚠️ 必须是完整号码，脱敏值 138****8888 会被拒'
+      else if (t === 'date' && !/^\d{4}-\d{2}-\d{2}/.test(v)) note = '⚠️ date 需为 YYYY-MM-DD'
+      return { key: f.key, type: t, value: v, len: v.length, ok: !note, note }
+    })
+    const badValues = valueAudit.filter((x) => !x.ok)
+
     let hint
     if (!need.length) {
       hint =
@@ -1888,11 +1934,16 @@ const actions = {
         (missing.length ? `；缺少 ${missing.join(', ')}` : '') +
         (extra.length ? `；多传 ${extra.join(', ')}` : '') +
         '。微信要求 data 与模板字段完全一致（不多不少）。'
+    } else if (badValues.length) {
+      hint =
+        `字段 key 没问题，但 ${badValues.length} 个值不合法：${badValues
+          .map((x) => `${x.key}(${x.type})="${x.value}" ${x.note}`)
+          .join('；')}`
     } else {
       hint =
-        '字段 key 与数量完全一致。若仍报 47003，问题在「值格式」：' +
-        '对照 content 里的字段类型检查 payload —— 如 phone_number 必须是完整手机号（不能是 138****8888 这种脱敏值）、' +
-        'date 需为 YYYY-MM-DD、thing/character_string 超长会被截断。'
+        '字段 key、数量、值格式全部通过体检。若线上仍报 47003，注意本接口用的是**当前这次部署的代码**去取值：' +
+        '确认已重新部署过云函数（旧代码可能仍在给脱敏值），' +
+        '并到数据库 car_logs 里看失败记录的 errCode / errMsg（现已记录微信原始报错）。'
     }
     return ok({
       found: true,
@@ -1904,6 +1955,7 @@ const actions = {
       dataMap: tpl.dataMap,
       payload: data,
       audit: { need, has, missing, extra, ok: !missing.length && !extra.length },
+      valueAudit,
       hint
     })
   },
@@ -2176,11 +2228,15 @@ const actions = {
     // ---- 发送订阅消息 ----
     const plateMask = maskPlate(car.plate)
     const data = renderTemplateData(tpl.dataMap, {
-      plate: plateMask,
+      // ⚠️ 订阅消息里必须用完整车牌：car_number 字段不接受 * 这类符号，
+      // 用脱敏值会被微信以 47003 拒收。接收方是车主本人，不存在隐私外泄。
+      plate: car.plate || plateMask,
       plateMask,
       message: text,
       time: cnTime(now),
       carModel: car.carModel || '车辆',
+      // 同理：模板若有 phone_number 字段，必须给完整号码
+      phone: car.phone || '',
       phoneMask: maskPhone(car.phone)
     })
 
@@ -2239,12 +2295,17 @@ const actions = {
         tip = '小程序未开通订阅消息能力，请到公众平台检查。'
       }
 
+      // 把微信原始错误与实际发出去的 data 一并落库：
+      // 47003 这类字段问题只有看到「发了什么 + 微信回了什么」才能定位，光看现象永远查不出。
       await writeLog({
         codeId,
         fromOpenid: openid,
         type: 'notify',
         status: reason,
         message: text,
+        errCode: err.errCode || null,
+        errMsg: String(err.errMsg || err.message || '').slice(0, 200),
+        sentData: data
       })
       updateLastNotify(car._id, now)
 
@@ -2252,6 +2313,7 @@ const actions = {
         delivered: false,
         reason,
         message: tip,
+        sentData: data,
         detail: err.errMsg || err.message
       })
     }
