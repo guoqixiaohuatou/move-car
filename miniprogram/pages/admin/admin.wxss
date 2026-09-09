@@ -1,0 +1,405 @@
+/* ============ 身份卡 ============ */
+.admin-head {
+  background: linear-gradient(135deg, #1f2a44 0%, #2d3d5c 100%);
+  border: none;
+}
+
+.admin-head__title {
+  font-size: 36rpx;
+  font-weight: 600;
+  color: #ffffff;
+  margin-bottom: 8rpx;
+}
+
+.admin-head__desc {
+  font-size: 24rpx;
+  color: rgba(255, 255, 255, 0.72);
+  line-height: 1.7;
+}
+
+.admin-head__openid {
+  display: flex;
+  align-items: center;
+  margin-top: 20rpx;
+  padding: 16rpx 20rpx;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 12rpx;
+}
+
+.admin-head__value {
+  flex: 1;
+  margin: 0 16rpx;
+  font-size: 24rpx;
+  color: #ffffff;
+  word-break: break-all;
+}
+
+.admin-head__copy {
+  font-size: 24rpx;
+  color: #8ab4ff;
+  flex-shrink: 0;
+}
+
+/* ============ 统计 ============ */
+.stat-card {
+  padding: 28rpx 24rpx 20rpx;
+}
+
+.stat-grid {
+  display: flex;
+}
+
+.stat {
+  flex: 1;
+  text-align: center;
+  position: relative;
+}
+
+.stat::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 10rpx;
+  bottom: 10rpx;
+  width: 2rpx;
+  background: var(--line);
+}
+
+.stat:last-child::after {
+  display: none;
+}
+
+.stat__num {
+  font-size: 44rpx;
+  font-weight: 600;
+  color: var(--text-1);
+  line-height: 1.2;
+}
+
+.stat__num--warn {
+  color: var(--warning);
+}
+
+.stat__num--off {
+  color: var(--text-3);
+}
+
+.stat__label {
+  font-size: 22rpx;
+  color: var(--text-3);
+  margin-top: 4rpx;
+}
+
+.stat-sub {
+  margin-top: 20rpx;
+  padding-top: 16rpx;
+  border-top: 2rpx solid var(--line);
+  font-size: 23rpx;
+  color: var(--text-3);
+  text-align: center;
+}
+
+/* ============ 运行模式（从首页拆过来的全局开关）============
+ * ⚠️ 样式必须在本页重新定义：home.wxss 是页面级样式，只对首页生效。
+ */
+.runmode {
+  margin-top: 0;
+  padding: 28rpx 28rpx 24rpx;
+}
+
+.runmode__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.runmode__text {
+  flex: 1;
+}
+
+.runmode__title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--text-1);
+  margin-bottom: 6rpx;
+}
+
+.runmode__desc {
+  font-size: 24rpx;
+  color: var(--text-2);
+}
+
+.runmode__switch {
+  transform: scale(1.15);
+  transform-origin: right center;
+}
+
+.runmode__hint {
+  margin-top: 16rpx;
+  padding: 14rpx 18rpx;
+  background: #fff7e6;
+  border-radius: 12rpx;
+  font-size: 23rpx;
+  line-height: 1.6;
+  color: #ad6800;
+}
+
+.runmode__hint--mute {
+  background: #f3f5f9;
+  color: var(--text-3);
+}
+
+.admin-openid {
+  margin-top: 16rpx;
+  padding: 16rpx 20rpx;
+  background: #f3f5f9;
+  border-radius: 12rpx;
+  text-align: center;
+}
+
+.admin-openid__label {
+  display: block;
+  font-size: 24rpx;
+  color: var(--text-3);
+  margin-bottom: 8rpx;
+}
+
+.admin-openid__value {
+  display: block;
+  font-size: 28rpx;
+  color: var(--text-1);
+  word-break: break-all;
+  font-family: 'SFMono-Regular', Consolas, 'Courier New', monospace;
+}
+
+/* ============ 搜索与筛选 ============ */
+.filter-card {
+  padding: 24rpx;
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  background: #f3f5f9;
+  border-radius: 40rpx;
+  padding: 0 12rpx 0 28rpx;
+  height: 76rpx;
+}
+
+.search__input {
+  flex: 1;
+  height: 76rpx;
+  font-size: 27rpx;
+  color: var(--text-1);
+}
+
+.search__clear {
+  padding: 0 16rpx;
+  font-size: 26rpx;
+  color: var(--text-3);
+}
+
+.search__btn {
+  flex-shrink: 0;
+  padding: 0 24rpx;
+  height: 60rpx;
+  line-height: 60rpx;
+  border-radius: 30rpx;
+  background: var(--brand);
+  color: #ffffff;
+  font-size: 26rpx;
+}
+
+.tabs {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 20rpx;
+}
+
+.tab {
+  flex: 1;
+  text-align: center;
+  height: 64rpx;
+  line-height: 64rpx;
+  border-radius: 32rpx;
+  font-size: 25rpx;
+  color: var(--text-2);
+  background: #f3f5f9;
+}
+
+.tab--on {
+  background: var(--brand-light);
+  color: var(--brand-dark);
+  font-weight: 600;
+}
+
+/* ============ 列表 ============ */
+.list-hint {
+  margin: 0 8rpx 16rpx;
+}
+
+.code-card {
+  padding: 28rpx 28rpx 24rpx;
+}
+
+.code-card--open {
+  border: 2rpx solid var(--brand);
+}
+
+.code-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 18rpx;
+  border-bottom: 2rpx solid var(--line);
+}
+
+.code-card__title {
+  font-size: 34rpx;
+  font-weight: 600;
+  color: var(--text-1);
+  letter-spacing: 2rpx;
+}
+
+.code-card__title.is-blank {
+  font-size: 30rpx;
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.code-card__tags {
+  display: flex;
+  gap: 10rpx;
+  flex-shrink: 0;
+}
+
+.tag--mine {
+  background: var(--brand-light);
+  color: var(--brand-dark);
+}
+
+.tag--wait {
+  background: #fff7e6;
+  color: #d46b08;
+}
+
+.code-card__meta {
+  padding: 8rpx 0 0;
+}
+
+.meta-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10rpx 0;
+}
+
+.meta__k {
+  font-size: 25rpx;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+.meta__v {
+  font-size: 25rpx;
+  color: var(--text-1);
+  text-align: right;
+  word-break: break-all;
+  max-width: 72%;
+}
+
+.meta__v--link {
+  color: var(--brand);
+}
+
+.code-card__more {
+  margin-top: 16rpx;
+  text-align: center;
+  font-size: 22rpx;
+}
+
+/* 异常提示条 */
+.warn-bar {
+  margin-top: 16rpx;
+  padding: 14rpx 18rpx;
+  background: #fff1f0;
+  border-radius: 12rpx;
+  font-size: 23rpx;
+  line-height: 1.6;
+  color: #cf1322;
+}
+
+/* ============ 展开详情 ============ */
+.detail {
+  margin-top: 20rpx;
+  padding-top: 20rpx;
+  border-top: 2rpx dashed var(--line);
+}
+
+.detail__block {
+  margin-bottom: 8rpx;
+}
+
+.detail__row {
+  display: flex;
+  align-items: center;
+  padding: 12rpx 0;
+  font-size: 25rpx;
+}
+
+.detail__k {
+  width: 180rpx;
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+
+.detail__v {
+  flex: 1;
+  color: var(--text-1);
+  word-break: break-all;
+}
+
+.detail__action {
+  flex-shrink: 0;
+  margin-left: 16rpx;
+  padding: 4rpx 20rpx;
+  border-radius: 20rpx;
+  background: var(--brand-light);
+  color: var(--brand-dark);
+  font-size: 23rpx;
+}
+
+.detail__verdict {
+  margin-top: 12rpx;
+  padding: 16rpx 20rpx;
+  background: #f6ffed;
+  border-radius: 12rpx;
+  font-size: 24rpx;
+  line-height: 1.7;
+  color: #389e0d;
+}
+
+.detail__verdict.is-bad {
+  background: #fff1f0;
+  color: #cf1322;
+}
+
+.detail__loading {
+  text-align: center;
+  padding: 20rpx 0;
+}
+
+.detail__tip {
+  margin-top: 8rpx;
+  line-height: 1.7;
+}
+
+/* ============ 底部 ============ */
+.load-more {
+  margin: 8rpx 0 24rpx;
+}
+
+.list-end {
+  text-align: center;
+  padding: 24rpx 0 8rpx;
+}

@@ -9,10 +9,9 @@ Page({
     // null = 还没查过；true/false = 查询结果
     tplReady: null,
     tplHint: '',
-    // 运行模式开关状态（trial / release）
-    // 初值直接用配置兜底，避免「云端其实已是正式版、开关却先闪一下体验版」
+    // 当前运行模式（只读展示；切换开关已拆到「管理后台」页）
+    // 初值直接用配置兜底，避免「云端其实已是正式版、页面却先闪一下体验版」
     isRelease: config.RUN_MODE === 'release',
-    runModeLoading: false,
     // 运行模式来源诊断（db / doc-missing / db-invalid / read-failed / read-error）
     runModeSrc: '',
     // 当前用户是否为空白码管理员（决定是否显示「生成空白码」入口）
@@ -48,35 +47,10 @@ Page({
   },
 
   /**
-   * 复制我的 openid（配置空白码权限用）
-   * 注意：手机剪贴板无法直接粘贴到电脑（微信不会跨设备同步剪贴板），
-   * 所以复制后要把 openid 原样弹出来，方便在电脑上照着手动输入。
+   * 复制我的 openid 已移入管理后台（首页不再展示真实 openid，避免误触泄露）。
+   * 首页只保留「认领管理员」这一条通路 —— 系统还没有管理员时必须能在首页认领，
+   * 否则新装后没有任何入口能进入管理后台。
    */
-  onCopyOpenid() {
-    const id = this.data.myOpenid
-    if (!id) {
-      wx.showModal({
-        title: 'openid 为空',
-        content: '没能读到你的 openid。请下拉刷新首页后重试；仍不行可到云开发控制台 → 云端测试执行 {"action":"getProfile"} 查看。',
-        showCancel: false,
-        confirmText: '知道了'
-      })
-      return
-    }
-    util.copy(id).then((succ) => {
-      wx.showModal({
-        title: succ ? '已复制到手机剪贴板' : '复制失败',
-        content:
-          `${id}\n\n` +
-          '⚠️ 手机复制的内容只能在手机上粘贴，无法直接粘到电脑。\n' +
-          '要在电脑端配置，请照着上面这串手动输入。',
-        confirmText: succ ? '知道了' : '长按上方文字复制',
-        showCancel: false
-      })
-    })
-  },
-
-  /** 认领管理员身份（自助配置空白码权限，无需去控制台粘 openid） */
   async onClaimAdmin() {
     const confirmed = await new Promise((resolve) => {
       wx.showModal({
@@ -119,101 +93,6 @@ Page({
         isRelease: config.RUN_MODE === 'release',
         runModeSrc: 'read-failed:' + ((err && err.message) || 'unknown')
       })
-    }
-  },
-
-  /**
-   * 运行模式开关：体验版 ↔ 正式版
-   * switch 的视觉会先变，这里根据目标值弹确认框；取消则回弹。
-   */
-  onRunModeChange(e) {
-    const nextRelease = !!e.detail.value
-    const next = nextRelease ? 'release' : 'trial'
-
-    const confirm = nextRelease
-      ? {
-          title: '切换到正式版？',
-          content:
-            '正式版下，任何微信用户都能扫开你的挪车码。\n\n' +
-            '请先确认小程序已完成 ICP 备案并正式发布 —— 否则路人仍扫不开（体验成员不受影响）。',
-          confirmText: '切到正式版'
-        }
-      : {
-          title: '切回体验版？',
-          content: '体验版仅「体验成员」能扫开挪车码，路人扫不开。适合调试阶段使用。',
-          confirmText: '切回体验版'
-        }
-
-    wx.showModal({
-      title: confirm.title,
-      content: confirm.content,
-      confirmText: confirm.confirmText,
-      cancelText: '再想想',
-      success: (res) => {
-        if (res.confirm) {
-          this.applyRunMode(next)
-        } else {
-          // 取消 → 回弹开关
-          this.setData({ isRelease: !nextRelease })
-        }
-      }
-    })
-  },
-
-  /** 真正调用云函数切换运行模式 */
-  async applyRunMode(mode) {
-    this.setData({ runModeLoading: true })
-    wx.showLoading({ title: '切换中…', mask: true })
-    try {
-      const r = await app.call('setRunMode', { runMode: mode })
-      this.setData({ isRelease: !!r.isRelease })
-      wx.hideLoading()
-
-      // 写入没真正落库（回读校验失败）：明确告警，别让用户以为切成功了。
-      // persisted 字段是新版云函数才返回的，老版本为 undefined，不会误触发。
-      if (r.persisted === false) {
-        wx.showModal({
-          title: '切换未生效',
-          content:
-            '已尝试写入，但回读到的运行模式仍是「' +
-            (r.isRelease ? '正式版' : '体验版') +
-            '」。请到云开发控制台确认 sys_config/global 文档可正常写入，然后重试。',
-          showCancel: false,
-          confirmText: '知道了'
-        })
-        return
-      }
-
-      util.toast(r.hint || (r.isRelease ? '已切到正式版' : '已切回体验版'), 'success')
-      // 版本是烧在码图里的：新码自动用新版本，旧码需打开码页自动重生成
-      wx.showModal({
-        title: '挪车码需要更新',
-        content:
-          '小程序码的版本是烧在图片里的，切换后：\n\n' +
-          '· 之后新建的码 → 直接是新版本\n' +
-          '· 已有的码 → 打开「查看挪车码」页会自动重生成\n' +
-          '· 已打印贴出去的贴纸 → 必须重新生成并重新打印',
-        showCancel: false,
-        confirmText: '知道了'
-      })
-    } catch (err) {
-      wx.hideLoading()
-      this.setData({ isRelease: mode !== 'release' })
-      // 切换失败必须把原因完整摊开：之前只弹一句 toast，
-      // 用户看到「切换失败」却不知道是 403 还是网络问题，只能反复重试。
-      const detail =
-        (err && err.message) ||
-        (err && err.errMsg) ||
-        (typeof err === 'string' ? err : '') ||
-        '未知错误'
-      wx.showModal({
-        title: '切换失败',
-        content: detail + (err && err.code ? `\n错误码：${err.code}` : ''),
-        showCancel: false,
-        confirmText: '知道了'
-      })
-    } finally {
-      this.setData({ runModeLoading: false })
     }
   },
 
@@ -418,6 +297,11 @@ Page({
   onCopyLink(e) {
     const { codeId } = e.currentTarget.dataset
     util.copy(codeId).then(() => util.toast('已复制码 ID', 'success'))
+  },
+
+  /** 进管理后台（仅管理员可见入口，云函数侧另有身份校验） */
+  goAdmin() {
+    wx.navigateTo({ url: '/pages/admin/admin' })
   },
 
   /** 隐私政策（审核要求：需在小程序内易于访问） */

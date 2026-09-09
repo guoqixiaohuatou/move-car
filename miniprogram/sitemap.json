@@ -4,6 +4,16 @@
     {
       "action": "allow",
       "page": "*"
+    },
+    {
+      "action": "disallow",
+      "page": "pages/admin/admin",
+      "_comment": "管理后台不参与微信搜索索引"
+    },
+    {
+      "action": "disallow",
+      "page": "pages/notify/notify",
+      "_comment": "扫码落地页带 scene 参数，索引无意义"
     }
   ]
 }

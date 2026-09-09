@@ -61,31 +61,6 @@
       </view>
     </view>
 
-    <!-- 运行模式：体验版 / 正式版（手机上点一下即切，无需改代码） -->
-    <view class="card card--flat runmode">
-      <view class="runmode__row">
-        <view class="runmode__text">
-          <view class="runmode__title">运行模式</view>
-          <view class="runmode__desc">
-            {{isRelease ? '正式版：任何微信用户都能扫开' : '体验版：仅体验成员能扫开'}}
-          </view>
-        </view>
-        <switch
-          class="runmode__switch"
-          checked="{{isRelease}}"
-          disabled="{{runModeLoading}}"
-          color="#1677FF"
-          bindchange="onRunModeChange"
-        />
-      </view>
-      <view class="runmode__hint" wx:if="{{isRelease}}">
-        ⚠️ 切到正式版前，请确认小程序已完成 ICP 备案并正式发布，否则路人仍扫不开。
-      </view>
-      <view class="runmode__hint runmode__hint--mute" wx:else>
-        调试阶段用体验版即可；正式对路人开放时再切到正式版。
-      </view>
-    </view>
-
     <block wx:for="{{cars}}" wx:key="codeId">
       <!-- 空白码：等待绑定车辆 -->
       <view class="card car car--blank" wx:if="{{item.isBlank}}">
@@ -193,20 +168,15 @@
       <button class="btn btn--outline" bindtap="onBlankTap" wx:if="{{isAdmin}}">＋ 空白挪车码</button>
     </view>
 
-    <!-- 管理员权限自助配置（认领 / 复制 openid） -->
+    <!-- 管理员入口：运行模式、码管理等全局能力已拆到「管理后台」页 -->
     <view class="admin-tools" wx:if="{{!loading}}">
-      <button wx:if="{{isAdmin}}" class="btn btn--ghost" bindtap="onCopyOpenid">复制我的 openid（空白码权限已配置）</button>
-      <button wx:if="{{!isAdmin && !hasAdmin}}" class="btn btn--ghost" bindtap="onClaimAdmin">认领管理员身份（解锁空白挪车码生成）</button>
-      <!-- 直接把 openid 显示出来：手机剪贴板粘不到电脑，长按这里可复制 -->
-      <view wx:if="{{isAdmin && myOpenid}}" class="admin-openid">
-        <text class="admin-openid__label">我的 openid（长按文字可复制）</text>
-        <text class="admin-openid__value" user-select>{{myOpenid}}</text>
-      </view>
-      <!-- 运行模式来源：出「明明切了正式版却还是体验版」时，一眼看出是没写进库还是写错了值 -->
-      <view wx:if="{{isAdmin && runModeSrc}}" class="admin-openid">
-        <text class="admin-openid__label">运行模式来源（诊断用）</text>
-        <text class="admin-openid__value" user-select>{{runModeSrc}}</text>
-      </view>
+      <button wx:if="{{isAdmin}}" class="btn btn--ghost" bindtap="goAdmin">
+        ⚙️ 管理后台 · 当前{{isRelease ? '正式版' : '体验版'}}
+      </button>
+      <!-- 系统还没有管理员时保留认领入口，否则新装后谁都进不去后台 -->
+      <button wx:if="{{!isAdmin && !hasAdmin}}" class="btn btn--ghost" bindtap="onClaimAdmin">
+        认领管理员身份（解锁空白挪车码）
+      </button>
     </view>
   </block>
 

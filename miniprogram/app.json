@@ -6,7 +6,8 @@
     "pages/blanks/blanks",
     "pages/notify/notify",
     "pages/logs/logs",
-    "pages/policy/policy"
+    "pages/policy/policy",
+    "pages/admin/admin"
   ],
   "window": {
     "navigationBarBackgroundColor": "#1677FF",

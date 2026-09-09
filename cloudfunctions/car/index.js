@@ -689,6 +689,88 @@ function fail(message, code = -1, detail = null) {
 }
 
 /* ============================================================
+ * 管理后台（仅管理员）
+ * ------------------------------------------------------------
+ * 前端页面 pages/admin/admin 统一承载：统计总览 + 全部挪车码管理
+ * （搜索 / 筛选 / 启停 / 编辑 / 解绑 / 重出码图 / 删除）。
+ *
+ * ⚠️ 前端隐藏入口只是体验，真正的边界必须在服务端：
+ *    每个 admin* action 都在开头独立校验一次管理员身份。
+ * ============================================================ */
+async function requireAdmin(openid) {
+  const adminOpenid = await getAdminOpenid()
+  if (!adminOpenid) {
+    return { ok: false, res: fail('系统尚未配置管理员，请先在首页认领管理员身份', 403) }
+  }
+  if (!openid || openid !== adminOpenid) {
+    return { ok: false, res: fail('仅管理员可操作', 403) }
+  }
+  return { ok: true, adminOpenid }
+}
+
+/** 手机号脱敏：138****8888（管理后台列表默认不展示完整号码） */
+function maskPhone(p) {
+  const s = String(p || '')
+  if (!s) return ''
+  if (s.length < 7) return s
+  return s.slice(0, 3) + '****' + s.slice(-4)
+}
+
+/** openid 脱敏：oXKsUxhE…IOy8 —— 管理后台要能区分不同车主，但不必暴露完整值 */
+function maskOpenid(id) {
+  const s = String(id || '')
+  if (!s) return ''
+  if (s.length <= 12) return s.slice(0, 4) + '…'
+  return s.slice(0, 8) + '…' + s.slice(-4)
+}
+
+/** 管理后台一次性最多扫描多少条码。个人项目通常几百张，够用且逻辑简单 */
+const ADMIN_SCAN_MAX = 500
+
+/** 按 createTime 倒序扫描 car_codes（云函数单次 get 上限 100 条） */
+async function scanCars(limit = ADMIN_SCAN_MAX) {
+  const out = []
+  const PAGE = 100
+  for (let skip = 0; skip < limit; skip += PAGE) {
+    const res = await db
+      .collection(COL_CARS)
+      .orderBy('createTime', 'desc')
+      .skip(skip)
+      .limit(PAGE)
+      .get()
+    out.push(...res.data)
+    if (!res.data || res.data.length < PAGE) break
+  }
+  return out
+}
+
+/** 码记录 → 管理后台列表项（手机号 / openid 默认脱敏，完整值走 adminDetail） */
+function toAdminItem(car, adminOpenid) {
+  // bound === false = 空白码；老数据没有 bound 字段，只要填了车牌就视为已绑定
+  const bound = car.bound !== false && !!car.plate
+  return {
+    _id: car._id,
+    codeId: car.codeId,
+    plate: car.plate || '',
+    carModel: car.carModel || '',
+    phoneMask: maskPhone(car.phone),
+    phoneSet: !!car.phone,
+    enabled: car.enabled !== false,
+    bound,
+    isBlank: !bound,
+    quota: car.quota || 0,
+    ownerOpenidMask: maskOpenid(car._openid),
+    // 管理员自己的码标出来，避免误删自己车上那张
+    isMine: !!(adminOpenid && car._openid === adminOpenid),
+    wxacodeEnv: car.wxacodeEnv || '',
+    hasImage: !!car.wxacodeFileID,
+    createTime: car.createTime || 0,
+    updateTime: car.updateTime || 0,
+    lastNotifyTime: car.lastNotifyTime || 0
+  }
+}
+
+/* ============================================================
  * 业务 Action
  * ============================================================ */
 const actions = {
@@ -1131,6 +1213,295 @@ const actions = {
   },
 
   /**
+   * 【管理后台】总览统计
+   * 一次拿齐后台首页要显示的所有数字，避免前端多次请求。
+   */
+  async adminStats({ openid }) {
+    const gate = await requireAdmin(openid)
+    if (!gate.ok) return gate.res
+
+    const d = new Date()
+    d.setHours(0, 0, 0, 0)
+    const todayTs = d.getTime()
+    const weekTs = todayTs - 6 * 24 * 3600 * 1000
+
+    const [total, blank, disabled, today, week, notifyAll, notifySent] = await Promise.all([
+      db.collection(COL_CARS).count(),
+      db.collection(COL_CARS).where({ bound: false }).count(),
+      db.collection(COL_CARS).where({ enabled: false }).count(),
+      db.collection(COL_CARS).where({ createTime: _.gt(todayTs) }).count(),
+      db.collection(COL_CARS).where({ createTime: _.gt(weekTs) }).count(),
+      db.collection(COL_LOGS).where({ type: 'notify' }).count(),
+      db.collection(COL_LOGS).where({ type: 'notify', status: 'sent' }).count()
+    ])
+
+    return ok({
+      total: total.total || 0,
+      blank: blank.total || 0,
+      // 老数据没有 bound 字段，用 total - blank 才准确（不能用 _.neq(false) 查，会漏掉老数据）
+      bound: (total.total || 0) - (blank.total || 0),
+      disabled: disabled.total || 0,
+      today: today.total || 0,
+      week: week.total || 0,
+      notifyTotal: notifyAll.total || 0,
+      notifySent: notifySent.total || 0
+    })
+  },
+
+  /**
+   * 【管理后台】全部挪车码列表（搜索 / 筛选 / 分页）
+   * ------------------------------------------------------------
+   * payload:
+   *   keyword   码 ID / 车牌 / 车辆备注 / 车主 openid 模糊匹配
+   *   filter    all | bound | blank | disabled
+   *   page      页码，从 1 开始
+   *   pageSize  每页条数，默认 20，上限 50
+   *
+   * 数据量小（个人项目通常几百张），直接全量扫描后在内存里过滤排序：
+   * 这样「已绑定」这种需要兼容老数据（无 bound 字段）的判断才准确，
+   * 也不会被数据库 where 的字段存在性语义坑到。
+   */
+  async adminList({ openid, payload }) {
+    const gate = await requireAdmin(openid)
+    if (!gate.ok) return gate.res
+
+    const p = payload || {}
+    const keyword = String(p.keyword || '').trim().toLowerCase()
+    const filter = p.filter || 'all'
+    const page = Math.max(1, parseInt(p.page, 10) || 1)
+    const pageSize = Math.min(50, Math.max(1, parseInt(p.pageSize, 10) || 20))
+
+    let rows = await scanCars()
+    rows = rows.map((c) => toAdminItem(c, gate.adminOpenid))
+
+    if (filter === 'blank') rows = rows.filter((r) => r.isBlank)
+    else if (filter === 'bound') rows = rows.filter((r) => r.bound)
+    else if (filter === 'disabled') rows = rows.filter((r) => !r.enabled)
+
+    if (keyword) {
+      rows = rows.filter((r) => {
+        const hay = [r.codeId, r.plate, r.carModel, r.ownerOpenidMask, r._openid]
+          .join(' ')
+          .toLowerCase()
+        return hay.indexOf(keyword) !== -1
+      })
+    }
+
+    const total = rows.length
+    const items = rows.slice((page - 1) * pageSize, page * pageSize)
+
+    // 顺带回传「当前运行模式要求的出码版本」，前端据此把版本不匹配的码标红
+    // —— 这类码正是「扫码打不开」的重灾区，必须在列表里一眼可见。
+    const runMode = await getRunMode()
+
+    return ok({
+      items,
+      total,
+      page,
+      pageSize,
+      hasMore: page * pageSize < total,
+      runMode,
+      expectEnv: runModeConfig(runMode).envVersion,
+      scannedCapped: rows.length >= ADMIN_SCAN_MAX
+    })
+  },
+
+  /**
+   * 【管理后台】单张码详情（含完整手机号 / 车主 openid / 健康诊断）
+   * ------------------------------------------------------------
+   * 列表默认脱敏；管理员需要联系车主或排查问题时才点开这一条，
+   * 完整号码不随列表批量下发，避免一次性泄露全部车主信息。
+   */
+  async adminDetail({ openid, payload }) {
+    const gate = await requireAdmin(openid)
+    if (!gate.ok) return gate.res
+
+    const { codeId } = payload || {}
+    if (!codeId) return fail('缺少码 ID', 400)
+
+    const res = await db.collection(COL_CARS).where({ codeId }).limit(1).get()
+    if (res.data.length === 0) return fail('这张码不存在', 404)
+
+    const car = res.data[0]
+    const runMode = await getRunMode()
+    const cfg = runModeConfig(runMode)
+
+    // 复用 dryrun 的判断口径，管理员不用切到控制台就能看出这张码扫了会怎样
+    const imgEnv = car.wxacodeEnv || ''
+    const envMatch = imgEnv === cfg.envVersion
+    const bound = car.bound !== false && !!car.plate
+
+    let verdict
+    if (!car.wxacodeFileID) verdict = '⚠️ 还没有生成过码图，扫码会失败 → 需要重新出图'
+    else if (!bound) verdict = '空白码（尚未绑定车辆）→ 扫码后引导绑定'
+    else if (car.enabled === false) verdict = '已停用 → 扫码会提示车主已关闭通知'
+    else if ((car.quota || 0) <= 0) verdict = '能打开，但通知额度为 0 → 点「通知车主」会失败'
+    else if (!envMatch)
+      verdict =
+        `⚠️ 这张图是 ${imgEnv || '未知'} 版，当前运行模式要求 ${cfg.envVersion} → 扫不开，需重新出图`
+    else verdict = '正常：扫码可通知车主'
+
+    return ok({
+      ...toAdminItem(car, gate.adminOpenid),
+      phone: car.phone || '',
+      ownerOpenid: car._openid || '',
+      wxacodeFileID: car.wxacodeFileID || '',
+      runMode,
+      expectEnv: cfg.envVersion,
+      envMatch,
+      verdict
+    })
+  },
+
+  /**
+   * 【管理后台】修改任意一张码
+   * ------------------------------------------------------------
+   * 可改：plate / phone / carModel / enabled
+   * 与 save 的区别：save 按 _openid 鉴权（车主改自己的），这里按管理员身份改任何人的。
+   * 典型场景：车主把车牌填错了、手机号换了、需要后台替他停用通知。
+   */
+  async adminUpdate({ openid, payload }) {
+    const gate = await requireAdmin(openid)
+    if (!gate.ok) return gate.res
+
+    const { codeId, plate, phone, carModel, enabled } = payload || {}
+    if (!codeId) return fail('缺少码 ID', 400)
+
+    const res = await db.collection(COL_CARS).where({ codeId }).limit(1).get()
+    if (res.data.length === 0) return fail('这张码不存在', 404)
+
+    const car = res.data[0]
+    const data = { updateTime: Date.now() }
+    let ownerSet = ''
+
+    if (plate !== undefined) {
+      if (!String(plate).trim()) return fail('车牌号不能为空', 400)
+      data.plate = String(plate).trim().toUpperCase()
+      // 改回车牌 = 这张码重新可用（从空白码变成已绑定）
+      data.bound = true
+      // ⚠️ 空白码的 _openid 是空的。若管理员在这里直接给它填车牌，
+      // 不补归属的话这张码会变成「无主码」—— 谁的首页都看不到它，
+      // 只能靠后台管理。所以兜底挂到管理员名下，并把结果回传给前端提示。
+      if (!car._openid) {
+        data._openid = gate.adminOpenid
+        ownerSet = 'admin'
+      }
+    }
+    if (phone !== undefined) {
+      const v = String(phone || '').trim()
+      // 手机号选填：留空表示车主不接受电话联系；填了必须合法
+      if (v && !/^1[3-9]\d{9}$/.test(v)) return fail('手机号格式不正确', 400)
+      data.phone = v
+    }
+    if (carModel !== undefined) data.carModel = String(carModel || '')
+    if (enabled !== undefined) data.enabled = !!enabled
+
+    await db.collection(COL_CARS).doc(res.data[0]._id).update({ data })
+    return ok({ codeId, updated: true, ownerSet })
+  },
+
+  /**
+   * 【管理后台】解绑（把已绑定的码还原成空白码，贴纸可重复利用）
+   * ------------------------------------------------------------
+   * 场景：车主换车 / 贴纸回收 / 误绑。解绑后清空车牌与联系方式，
+   * 并把归属 openid 置空 —— 否则原车主首页仍能看到它，且别人绑不上。
+   * 码 ID 与码图不变，已印出去的贴纸不用重印。
+   */
+  async adminUnbind({ openid, payload }) {
+    const gate = await requireAdmin(openid)
+    if (!gate.ok) return gate.res
+
+    const { codeId } = payload || {}
+    if (!codeId) return fail('缺少码 ID', 400)
+
+    const res = await db.collection(COL_CARS).where({ codeId }).limit(1).get()
+    if (res.data.length === 0) return fail('这张码不存在', 404)
+
+    await db.collection(COL_CARS).doc(res.data[0]._id).update({
+      data: {
+        plate: '',
+        phone: '',
+        carModel: '',
+        bound: false,
+        enabled: true,
+        quota: 0,
+        _openid: '', // 清空归属，让下一个扫码的人能重新绑定
+        lastNotifyTime: 0,
+        updateTime: Date.now()
+      }
+    })
+    return ok({ codeId, bound: false })
+  },
+
+  /**
+   * 【管理后台】强制重新出码图（可指定版本）
+   * ------------------------------------------------------------
+   * 版本（体验版 / 正式版）是烧死在图片里的。「切了运行模式码还是扫不开」
+   * 就是因为旧图没跟着换。这里给管理员一个明确的重出按钮：
+   *   envVersion 不传 → 跟随当前运行模式；传 release / trial → 强制指定。
+   */
+  async adminRebuild({ openid, payload }) {
+    const gate = await requireAdmin(openid)
+    if (!gate.ok) return gate.res
+
+    const { codeId, envVersion: envOverride } = payload || {}
+    if (!codeId) return fail('缺少码 ID', 400)
+
+    const res = await db.collection(COL_CARS).where({ codeId }).limit(1).get()
+    if (res.data.length === 0) return fail('这张码不存在', 404)
+
+    const car = res.data[0]
+    try {
+      const built = await buildWxacode(codeId, envOverride, car.wxacodeFileID)
+      await db.collection(COL_CARS).doc(car._id).update({
+        data: {
+          wxacodeFileID: built.fileID,
+          wxacodeEnv: built.envVersion,
+          updateTime: Date.now()
+        }
+      })
+      return ok({ codeId, fileID: built.fileID, envVersion: built.envVersion, rebuilt: true })
+    } catch (err) {
+      return fail(
+        '重新出图失败：' + (err.errMsg || err.message || String(err)),
+        500,
+        err.errCode
+      )
+    }
+  },
+
+  /**
+   * 【管理后台】删除任意一张码
+   * ------------------------------------------------------------
+   * 与 remove 的区别：remove 只能删自己的，这里管理员可清理任何一张
+   * （用户注销、误生成、测试残留等）。同时删掉云存储里的码图，避免留垃圾文件。
+   */
+  async adminRemove({ openid, payload }) {
+    const gate = await requireAdmin(openid)
+    if (!gate.ok) return gate.res
+
+    const { codeId } = payload || {}
+    if (!codeId) return fail('缺少码 ID', 400)
+
+    const res = await db.collection(COL_CARS).where({ codeId }).limit(1).get()
+    if (res.data.length === 0) return fail('这张码不存在', 404)
+
+    const car = res.data[0]
+    await db.collection(COL_CARS).doc(car._id).remove()
+
+    // 码图是废文件，一并清掉；失败不影响主流程（删记录已经成功）
+    if (car.wxacodeFileID) {
+      try {
+        await cloud.deleteFile({ fileList: [car.wxacodeFileID] })
+      } catch (e) {
+        /* 图删不掉无所谓 */
+      }
+    }
+
+    return ok({ codeId, removed: true, fileRemoved: !!car.wxacodeFileID })
+  },
+
+  /**
    * 切换运行模式（云端配置，免改代码 / 免重部署）
    * ------------------------------------------------------------
    * 仅车主本人可调用（名下必须已有车辆），防止陌生人改动全局开关。
@@ -1142,13 +1513,25 @@ const actions = {
     if (runMode !== 'trial' && runMode !== 'release') {
       return fail('runMode 只能是 trial 或 release', 400)
     }
-    // 仅名下有车的车主可切换，防止陌生人改动。
+    // 权限：管理员（可直接切）或名下有车的车主。防止陌生人改动全局开关。
     // openid 为空说明来自云开发控制台/定时触发器，调用方本身就是管理员，直接放行
     // （不能带着 undefined 去查 _openid，会抛错）。
     if (openid) {
-      const mine = await db.collection(COL_CARS).where({ _openid: openid }).limit(1).get()
-      if (!mine.data || mine.data.length === 0) {
-        return fail('仅车主本人可切换运行模式', 403)
+      // 管理员优先：管理后台的运行模式开关必须始终可用，
+      // 即便管理员自己没添加过车辆（旧逻辑要求「名下有车」，会让后台开关直接 403）
+      let isAdmin = false
+      try {
+        const adminOpenid = await getAdminOpenid()
+        isAdmin = !!(adminOpenid && adminOpenid === openid)
+      } catch (e) {
+        /* 读不到按非管理员处理 */
+      }
+
+      if (!isAdmin) {
+        const mine = await db.collection(COL_CARS).where({ _openid: openid }).limit(1).get()
+        if (!mine.data || mine.data.length === 0) {
+          return fail('仅管理员或车主本人可切换运行模式', 403)
+        }
       }
     }
     // steps：把每一步的真实结果都带回去。云端测试里一眼就能定位

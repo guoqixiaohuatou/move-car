@@ -1,0 +1,286 @@
+<view class="page">
+  <!-- 身份验证中 -->
+  <view class="empty" wx:if="{{checking}}">
+    <view class="empty__icon">🔐</view>
+    <view class="empty__title">正在验证管理员身份…</view>
+  </view>
+
+  <block wx:else>
+    <!-- ===== 身份卡 ===== -->
+    <view class="card admin-head">
+      <view class="admin-head__title">⚙️ 管理后台</view>
+      <view class="admin-head__desc">
+        仅管理员可见。所有挪车码的查看、启停、解绑、重新出图、删除都在这里。
+      </view>
+      <view class="admin-head__openid" bindtap="onCopyOpenid">
+        <text class="t-mute">我的 openid</text>
+        <text class="admin-head__value t-mono">{{myOpenid}}</text>
+        <text class="admin-head__copy">复制</text>
+      </view>
+    </view>
+
+    <!-- ===== 总览统计 ===== -->
+    <view class="card stat-card" wx:if="{{stats}}">
+      <view class="stat-grid">
+        <view class="stat">
+          <view class="stat__num">{{stats.total}}</view>
+          <view class="stat__label">码总数</view>
+        </view>
+        <view class="stat">
+          <view class="stat__num t-brand">{{stats.bound}}</view>
+          <view class="stat__label">已绑定</view>
+        </view>
+        <view class="stat">
+          <view class="stat__num stat__num--warn">{{stats.blank}}</view>
+          <view class="stat__label">空白码</view>
+        </view>
+        <view class="stat">
+          <view class="stat__num stat__num--off">{{stats.disabled}}</view>
+          <view class="stat__label">已停用</view>
+        </view>
+      </view>
+      <view class="stat-sub">
+        今日新增 {{stats.today}} · 近 7 天 {{stats.week}} · 通知成功 {{stats.notifySent}}/{{stats.notifyTotal}}
+      </view>
+    </view>
+
+    <!-- ===== 运行模式（全局开关，从首页拆过来） ===== -->
+    <view class="card card--flat runmode">
+      <view class="runmode__row">
+        <view class="runmode__text">
+          <view class="runmode__title">运行模式</view>
+          <view class="runmode__desc">
+            {{isRelease ? '正式版：任何微信用户都能扫开' : '体验版：仅体验成员能扫开'}}
+          </view>
+        </view>
+        <switch
+          class="runmode__switch"
+          checked="{{isRelease}}"
+          disabled="{{runModeLoading}}"
+          color="#1677FF"
+          bindchange="onRunModeChange"
+        />
+      </view>
+      <view class="runmode__hint" wx:if="{{isRelease}}">
+        ⚠️ 切到正式版前，请确认小程序已完成 ICP 备案并正式发布，否则路人仍扫不开。
+      </view>
+      <view class="runmode__hint runmode__hint--mute" wx:else>
+        调试阶段用体验版即可；正式对路人开放时再切到正式版。
+      </view>
+      <view class="admin-openid" wx:if="{{runModeSrc}}">
+        <text class="admin-openid__label">运行模式来源（诊断用）</text>
+        <text class="admin-openid__value" user-select>{{runModeSrc}}</text>
+      </view>
+    </view>
+
+    <!-- ===== 快捷操作 ===== -->
+    <view class="btn-group">
+      <button class="btn btn--primary" bindtap="onBlankTap">＋ 生成空白挪车码</button>
+    </view>
+
+    <!-- ===== 搜索 + 筛选 ===== -->
+    <view class="card card--flat filter-card">
+      <view class="search">
+        <input
+          class="search__input"
+          placeholder="搜索码 ID / 车牌 / 备注 / 车主"
+          value="{{keyword}}"
+          bindinput="onKeywordInput"
+          bindconfirm="onSearch"
+          confirm-type="search"
+        />
+        <text class="search__clear" wx:if="{{keyword}}" catchtap="onClearKeyword">✕</text>
+        <text class="search__btn" catchtap="onSearch">搜索</text>
+      </view>
+      <view class="tabs">
+        <view
+          wx:for="{{filters}}"
+          wx:key="key"
+          class="tab {{filter === item.key ? 'tab--on' : ''}}"
+          data-key="{{item.key}}"
+          bindtap="onFilterTap"
+        >
+          {{item.label}}
+        </view>
+      </view>
+    </view>
+
+    <!-- ===== 列表 ===== -->
+    <view class="list-hint t-mute" wx:if="{{!loading}}">
+      共 {{total}} 张{{keyword ? '（已按关键词过滤）' : ''}} · 点击卡片展开管理
+    </view>
+
+    <view class="empty" wx:if="{{!loading && list.length === 0}}">
+      <view class="empty__icon">📭</view>
+      <view class="empty__title">没有符合条件的挪车码</view>
+      <view class="empty__desc">换个筛选条件，或清空搜索关键词试试</view>
+    </view>
+
+    <view
+      wx:for="{{list}}"
+      wx:key="codeId"
+      class="card code-card {{expandedId === item.codeId ? 'code-card--open' : ''}}"
+      data-id="{{item.codeId}}"
+      bindtap="onCardTap"
+    >
+      <!-- 头部 -->
+      <view class="code-card__head">
+        <view class="code-card__title {{item.isBlank ? 'is-blank' : ''}} t-mono">
+          {{item.title}}
+        </view>
+        <view class="code-card__tags">
+          <text class="tag tag--mine" wx:if="{{item.isMine}}">我的</text>
+          <text
+            class="tag {{item.isBlank ? 'tag--wait' : (item.enabled ? 'tag--on' : 'tag--off')}}"
+          >
+            {{item.isBlank ? '待绑定' : (item.enabled ? '通知开启' : '已暂停')}}
+          </text>
+        </view>
+      </view>
+
+      <!-- 摘要 -->
+      <view class="code-card__meta">
+        <view class="meta-line">
+          <text class="meta__k">码 ID</text>
+          <text class="meta__v meta__v--link t-mono" data-id="{{item.codeId}}" catchtap="onCopyCodeId">
+            {{item.codeId}} · 复制
+          </text>
+        </view>
+        <view class="meta-line">
+          <text class="meta__k">联系</text>
+          <text class="meta__v">{{item.phoneText}}</text>
+        </view>
+        <view class="meta-line">
+          <text class="meta__k">车主</text>
+          <text class="meta__v t-mono">{{item.ownerText}}</text>
+        </view>
+        <view class="meta-line">
+          <text class="meta__k">码图</text>
+          <text class="meta__v {{item.envMismatch || item.noImage ? 't-danger' : ''}}">
+            {{item.envText}}{{item.envMismatch ? '（版本不符）' : ''}}
+          </text>
+        </view>
+        <view class="meta-line">
+          <text class="meta__k">创建</text>
+          <text class="meta__v">{{item.createText}}</text>
+        </view>
+        <view class="meta-line">
+          <text class="meta__k">最近通知</text>
+          <text class="meta__v">{{item.lastText}}</text>
+        </view>
+      </view>
+
+      <!-- 异常提示 -->
+      <view class="warn-bar" wx:if="{{item.noImage}}">
+        ⚠️ 还没生成过码图 → 扫码会失败，展开后点「重新出图」
+      </view>
+      <view class="warn-bar" wx:elif="{{item.envMismatch}}">
+        ⚠️ 这张图是{{item.envText}}，当前运行模式要求{{expectEnv === 'release' ? '正式版' : '体验版'}} → 扫不开，需重新出图
+      </view>
+
+      <!-- 展开：详情 + 操作 -->
+      <view class="detail" wx:if="{{expandedId === item.codeId}}">
+        <view class="detail__block" wx:if="{{detail}}">
+          <view class="detail__row">
+            <text class="detail__k">车辆备注</text>
+            <text class="detail__v">{{detail.carModel || '无'}}</text>
+          </view>
+          <view class="detail__row">
+            <text class="detail__k">完整手机号</text>
+            <text class="detail__v t-mono">{{detail.phoneText || '未填'}}</text>
+            <text
+              class="detail__action"
+              wx:if="{{!revealingPhone && detail.phone}}"
+              catchtap="onRevealPhone"
+            >
+              显示
+            </text>
+          </view>
+          <view class="detail__row">
+            <text class="detail__k">车主 openid</text>
+            <text class="detail__v t-mono">{{detail.ownerOpenid || '（空白码，未绑定）'}}</text>
+          </view>
+          <view class="detail__row">
+            <text class="detail__k">剩余额度</text>
+            <text class="detail__v">{{detail.quota}} 次</text>
+          </view>
+          <view class="detail__row">
+            <text class="detail__k">更新时间</text>
+            <text class="detail__v">{{detail.updateText}}</text>
+          </view>
+          <view class="detail__verdict {{detail.envMatch ? '' : 'is-bad'}}">
+            {{detail.verdict || '诊断中…'}}
+          </view>
+        </view>
+        <view class="detail__loading t-mute" wx:else>加载详情…</view>
+
+        <view class="btn-group">
+          <button class="btn btn--ghost" data-id="{{item.codeId}}" catchtap="onPreviewCode">
+            查看码图
+          </button>
+          <button class="btn btn--ghost" data-id="{{item.codeId}}" catchtap="onRebuild">
+            重新出图
+          </button>
+        </view>
+
+        <view class="btn-group">
+          <button
+            class="btn btn--ghost"
+            data-id="{{item.codeId}}"
+            data-plate="{{item.plateText}}"
+            catchtap="onEditPlate"
+          >
+            改车牌
+          </button>
+          <button class="btn btn--ghost" data-id="{{item.codeId}}" catchtap="onEditPhone">
+            改手机号
+          </button>
+        </view>
+
+        <view class="btn-group">
+          <button
+            class="btn btn--outline"
+            data-id="{{item.codeId}}"
+            data-enabled="{{item.enabled}}"
+            catchtap="onToggle"
+          >
+            {{item.enabled ? '暂停通知' : '启用通知'}}
+          </button>
+          <button
+            class="btn btn--ghost"
+            data-id="{{item.codeId}}"
+            data-plate="{{item.plateText}}"
+            catchtap="onUnbind"
+          >
+            解绑还原
+          </button>
+        </view>
+
+        <view class="btn-group">
+          <button
+            class="btn btn--danger"
+            data-id="{{item.codeId}}"
+            data-plate="{{item.plateText}}"
+            catchtap="onDelete"
+          >
+            删除这张码
+          </button>
+        </view>
+
+        <view class="t-mute detail__tip">
+          提示：「解绑还原」会清空车牌与联系方式但保留码 ID，已打印的贴纸可以重复利用；「删除」则彻底作废。
+        </view>
+      </view>
+
+      <view class="code-card__more t-mute" wx:else>点击展开管理 ↓</view>
+    </view>
+
+    <!-- 加载更多 -->
+    <view class="load-more" wx:if="{{hasMore}}">
+      <button class="btn btn--ghost" bindtap="loadMore" loading="{{loadingMore}}">
+        {{loadingMore ? '加载中…' : '加载更多'}}
+      </button>
+    </view>
+    <view class="list-end t-mute" wx:elif="{{list.length > 0}}">— 已经到底了 —</view>
+  </block>
+</view>
