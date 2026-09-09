@@ -1840,6 +1840,75 @@ const actions = {
   },
 
   /**
+   * 【模板体检】诊断 47003「模板字段有误」的整条链路（免登录白名单，控制台可直调）
+   * ------------------------------------------------------------
+   * 把模板从选用到最终 payload 的每一步都摊开，一眼看出哪里对不上：
+   *   content   微信返回的模板字段定义原文（字段 key / 类型都在这）
+   *   fields    代码解析出的 [{ key, type, label }]
+   *   dataMap   自动映射（key → 数据源）
+   *   payload   用示例上下文渲染出的、实际发给微信的 data
+   *   audit     字段 key 数量比对 + 缺/多检查
+   */
+  async templateInspect() {
+    const out = { manual: { templateId: MANUAL.templateId, data: MANUAL.data } }
+    let tpl = null
+    try {
+      tpl = await resolveTemplate()
+    } catch (e) {
+      return ok({ ...out, error: e.errMsg || e.message || String(e) })
+    }
+    if (!tpl) {
+      return ok({
+        ...out,
+        found: false,
+        hint: '模板未找到：请确认该 templateId 已在本账号「订阅消息 > 我的模板」里，否则 resolveTemplate 返回 null，根本走不到发送。'
+      })
+    }
+    const ctx = {
+      plate: maskPlate('京A12345'),
+      plateMask: maskPlate('京A12345'),
+      message: DEFAULT_MESSAGE,
+      time: cnTime(Date.now()),
+      carModel: '白色SUV',
+      phoneMask: maskPhone('13812348888')
+    }
+    const data = renderTemplateData(tpl.dataMap, ctx)
+    const need = (tpl.fields || []).map((f) => f.key).sort()
+    const has = Object.keys(data).sort()
+    const missing = need.filter((k) => !has.includes(k))
+    const extra = has.filter((k) => !need.includes(k))
+    let hint
+    if (!need.length) {
+      hint =
+        '⚠️ 模板字段解析为空。content 里没有匹配到 {{xxx.DATA}} 结构 —— ' +
+        '把上面 content 原文发开发者核对解析正则，这是最可能的 47003 根因。'
+    } else if (missing.length || extra.length) {
+      hint =
+        `字段不匹配：模板需要 ${need.join(', ')}，实际给 ${has.join(', ')}` +
+        (missing.length ? `；缺少 ${missing.join(', ')}` : '') +
+        (extra.length ? `；多传 ${extra.join(', ')}` : '') +
+        '。微信要求 data 与模板字段完全一致（不多不少）。'
+    } else {
+      hint =
+        '字段 key 与数量完全一致。若仍报 47003，问题在「值格式」：' +
+        '对照 content 里的字段类型检查 payload —— 如 phone_number 必须是完整手机号（不能是 138****8888 这种脱敏值）、' +
+        'date 需为 YYYY-MM-DD、thing/character_string 超长会被截断。'
+    }
+    return ok({
+      found: true,
+      templateId: tpl.templateId,
+      title: tpl.title,
+      source: tpl.source,
+      content: tpl.content,
+      fields: tpl.fields,
+      dataMap: tpl.dataMap,
+      payload: data,
+      audit: { need, has, missing, extra, ok: !missing.length && !extra.length },
+      hint
+    })
+  },
+
+  /**
    * 清理过期数据（由定时触发器调用，不需要前端调用）
    * ------------------------------------------------------------
    * 删除超过保留期的通知记录，兑现隐私政策里的留存承诺。
@@ -2152,8 +2221,13 @@ const actions = {
         await db.collection(COL_CARS).doc(car._id).update({ data: { quota: 0 } })
       } else if (errCode === 47003) {
         reason = 'bad_template'
+        // 带上微信原始 errmsg（如有），落库后管理员可在后台看到具体哪个字段不对
+        const raw = String(err.message || '').replace(/^订阅消息发送失败：\d+\s*/, '')
         tip =
-          '模板字段有误（47003）。自动模式一般不会出现；若你填了 MANUAL.data，请核对左边字段名是否与所选模板完全一致。'
+          '模板字段有误（47003）。' +
+          (raw ? `微信提示：${raw} ` : '') +
+          '自动模式一般不会出现；若你填了 MANUAL.data，请核对左边字段名是否与所选模板完全一致。' +
+          '可用云端测试执行 {"action":"templateInspect"} 体检模板字段。'
         // 清缓存，下次重新拉取模板
         tplCache = { at: 0, value: null }
       } else if (errCode === 40037 || errCode === 40036) {
@@ -2224,7 +2298,7 @@ function updateLastNotify(docId, ts) {
  *
  * 除白名单外，其余 action 都必须由小程序端通过 wx.cloud.callFunction 调用。
  */
-const NO_AUTH_ACTIONS = ['health', 'cleanExpired', 'getRunMode', 'setRunMode', 'dryrun']
+const NO_AUTH_ACTIONS = ['health', 'cleanExpired', 'getRunMode', 'setRunMode', 'dryrun', 'templateInspect']
 
 /**
  * 入参容错解析
