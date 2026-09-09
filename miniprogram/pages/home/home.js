@@ -1,5 +1,6 @@
 const app = getApp()
 const util = require('../../utils/util.js')
+const config = require('../../config.js')
 
 Page({
   data: {
@@ -9,8 +10,11 @@ Page({
     tplReady: null,
     tplHint: '',
     // 运行模式开关状态（trial / release）
-    isRelease: false,
+    // 初值直接用配置兜底，避免「云端其实已是正式版、开关却先闪一下体验版」
+    isRelease: config.RUN_MODE === 'release',
     runModeLoading: false,
+    // 运行模式来源诊断（db / doc-missing / db-invalid / read-failed / read-error）
+    runModeSrc: '',
     // 当前用户是否为空白码管理员（决定是否显示「生成空白码」入口）
     isAdmin: false,
     // 系统里是否已有人认领管理员（认领后对所有人隐藏「认领」入口，防陌生人抢认）
@@ -107,9 +111,14 @@ Page({
   async loadRunMode() {
     try {
       const r = await app.call('getRunMode', {})
-      this.setData({ isRelease: !!r.isRelease })
+      this.setData({ isRelease: !!r.isRelease, runModeSrc: r.source || '' })
     } catch (err) {
-      // 读取失败不打扰用户，默认按 trial 显示
+      // 读取失败：用前端配置的兜底值，不让开关莫名回弹成「体验版」
+      // （曾出现过云端正常、前端读超时导致开关显示错的排查噩梦）
+      this.setData({
+        isRelease: config.RUN_MODE === 'release',
+        runModeSrc: 'read-failed:' + ((err && err.message) || 'unknown')
+      })
     }
   },
 
@@ -190,7 +199,19 @@ Page({
     } catch (err) {
       wx.hideLoading()
       this.setData({ isRelease: mode !== 'release' })
-      util.toast(err.message || '切换失败')
+      // 切换失败必须把原因完整摊开：之前只弹一句 toast，
+      // 用户看到「切换失败」却不知道是 403 还是网络问题，只能反复重试。
+      const detail =
+        (err && err.message) ||
+        (err && err.errMsg) ||
+        (typeof err === 'string' ? err : '') ||
+        '未知错误'
+      wx.showModal({
+        title: '切换失败',
+        content: detail + (err && err.code ? `\n错误码：${err.code}` : ''),
+        showCancel: false,
+        confirmText: '知道了'
+      })
     } finally {
       this.setData({ runModeLoading: false })
     }

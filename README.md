@@ -191,7 +191,7 @@ move-car/
 |---|---|
 | 集合 `car_codes` / `notify_logs` | 集合已存在（不存在会自动创建） |
 | 订阅消息模板 | 云函数环境变量 MP_APPID/MP_APPSECRET 已配 + 已发现可用模板（HTTP 直连，不再依赖 cloud.openapi） |
-| 运行模式 | 告诉你当前运行模式是 trial 还是 release（来自云端配置 `sys_config/global.runMode`，默认 trial） |
+| 运行模式 | 告诉你当前运行模式是 trial 还是 release（来自云端配置 `sys_config/global.runMode`，数据库无合法值时默认 release） |
 
 `allPass: true` 就说明后端全通。任何一项 FAIL，`detail` 里都写明了怎么修，照着改即可。
 
@@ -507,6 +507,8 @@ const MANUAL = {
 | **自己扫得开、别人扫提示「无权限访问」** | 扫的是体验版码。体验版只对体验成员开放，路人扫不开 → 按**第 9 步**发布正式版，并把运行模式切成 `release` |
 | 发布后码还是扫不开 | ①「版本管理」里确认「线上版本」有版本号（审核通过 ≠ 已发布）；② 运行模式切成 `release`（云端配置 `sys_config/global.runMode` 或调 `setRunMode`，无需重部署）；③ 删掉旧车辆重新生成码 |
 | 云端测试 `getRunMode` / `setRunMode` 报 401「需要用户身份」 | 云函数还是旧版本。这两个 action 在**修复版本**里才加入免登录白名单 → 右键 `cloudfunctions/car` → **上传并部署：云端安装依赖**，再重试 |
+| 切了正式版、也重新生成了码，扫出来还是「体验版」 | 旧图被缓存了。码图原本存在固定路径 `wxacode/{codeId}.png`，重生成是**覆盖同一文件**、fileID 不变，CDN 会继续吐旧图。已改为带 `envVersion + 时间戳` 的新路径（新 fileID）并删除旧图。若仍异常：删掉这辆车重新添加，拿一个全新 codeId |
+| 运行模式开关「打开后重进又关闭」 | 看首页管理员区新增的「运行模式来源」：`db`=正常；`doc-missing`/`db-invalid`=库里没这个字段或值不合法（必须小写 `release`/`trial`）；`read-error`/`read-failed`=读不到。也可云端测试 `getRunMode` 看 `source` 字段 |
 | 保存图片失败 | 没给相册权限 → 弹窗里点「去设置」开启 |
 | 保存图片**点了没反应、也不报错** | 隐私保护指引没配或没生效 → 按**第 5 步**检查后台「服务内容声明」，并确认已审核通过 |
 | 「无法获取用户身份」 | 正常：除 `health` / `cleanExpired` 外，所有 action 都必须由小程序端通过 `wx.cloud.callFunction` 调用，云端调试直接跑拿不到 OPENID |
@@ -681,7 +683,7 @@ grep -rn "交警\|交管\|车管所\|12123\|官方挪车\|政务\|公安" --incl
 | `miniprogram/config.js` | `SHOW_PLAIN_PHONE` | 选填，默认 `true`（**公开上线务必改 `false`**） |
 | `pages/policy/policy.js` | `effectiveDate` / `version` | ✅ 上线前改成实际值 |
 | `pages/policy/policy.js` | `logRetentionDays` | ✅ 须与云函数 `RETENTION` 一致 |
-| `cloudfunctions/car/index.js` | 运行模式 `RUN_MODE` | **已改为云端配置项，无需再改代码重部署**。默认 `trial`；发布上线后在控制台把 `sys_config/global.runMode` 改成 `release`（或调用 `setRunMode`），同时驱动订阅消息与小程序码版本 |
+| `cloudfunctions/car/index.js` | 运行模式 `RUN_MODE` | **已改为云端配置项，无需再改代码重部署**。数据库没写/写了非法值时默认 `release`（发布上线后这才是正确默认）；调试时在控制台把 `sys_config/global.runMode` 改成 `trial`（或调用 `setRunMode`），同时驱动订阅消息与小程序码版本 |
 | `cloudfunctions/car/index.js` | `MANUAL.templateId` | 选填，留空＝自动发现 |
 | `cloudfunctions/car/index.js` | `RETENTION` | ✅ 与 policy.js 保持一致 |
 | mp 后台 | 用户隐私保护指引 | ✅ 见第 5 步，不配则相册功能真机失效 |

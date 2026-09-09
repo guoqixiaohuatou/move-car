@@ -202,6 +202,11 @@
         <text class="admin-openid__label">我的 openid（长按文字可复制）</text>
         <text class="admin-openid__value" user-select>{{myOpenid}}</text>
       </view>
+      <!-- 运行模式来源：出「明明切了正式版却还是体验版」时，一眼看出是没写进库还是写错了值 -->
+      <view wx:if="{{isAdmin && runModeSrc}}" class="admin-openid">
+        <text class="admin-openid__label">运行模式来源（诊断用）</text>
+        <text class="admin-openid__value" user-select>{{runModeSrc}}</text>
+      </view>
     </view>
   </block>
 

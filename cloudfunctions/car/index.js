@@ -44,7 +44,18 @@ const COL_LOGS = 'notify_logs'
  *        （仅车主本人可调用，防止陌生人改动）
  * ============================================================ */
 const COL_SYS = 'sys_config'
-const DEFAULT_RUN_MODE = 'trial'
+
+/**
+ * 数据库里没有合法的 runMode 时使用的兜底值
+ * ------------------------------------------------------------
+ * ⚠️ 已由 trial 改为 release。
+ * 小程序正式发布后，绝大多数问题的表现都是「码扫不开、提示体验版」，
+ * 而根因往往是 sys_config/global 里压根没有 runMode 字段（或填了非法值），
+ * 此时回退成 trial 就会静默地一直出体验版码 —— 极难排查。
+ * 发布上线后 release 才是正确默认：数据库没配置 = 按正式版跑。
+ * 需要调试时显式切回 trial（开关 / 控制台改库 / setRunMode 均可，优先级更高）。
+ */
+const DEFAULT_RUN_MODE = 'release'
 
 /* 运行模式缓存（进程内复用 60 秒；setRunMode 会立即失效，确保切换即时生效） */
 let runModeCache = { at: 0, value: null }
@@ -420,17 +431,20 @@ function maskPhone(phone) {
  * 生成（或重新生成）某个 codeId 的小程序码并上传到云存储
  * ------------------------------------------------------------
  * 抽成公共函数，供「新建车辆后取码」和「创建空白码时立即出码」两处复用。
- * 云存储路径固定为 wxacode/{codeId}.png —— 同一张码重复生成会直接覆盖，
- * 不会堆积垃圾文件（版本切换后重生成正是依赖这个覆盖行为）。
+ *
+ * 云存储路径带 envVersion + 时间戳（wxacode/{codeId}-{env}-{ts}.png）：
+ * 固定路径会让重生成变成「覆盖同一文件」，fileID 不变 → CDN 继续吐旧图，
+ * 于是出现「切了正式版、也重新生成了，扫出来还是体验版」的假象。
  *
  * @param {string} [envOverride] 指定 'release' | 'trial'，不给则跟随当前运行模式。
+ * @param {string} [oldFileID] 旧图 fileID，出图成功后删除，避免堆积垃圾文件。
  *   典型用途：小程序还在审核、正式版未发布时，管理员想「先把贴纸印出来」，
  *   此时要强制出 release 码——trial 码在正式发布后路人扫不开，印了等于废纸。
  *   因为 checkPath 恒为 false，未发布的小程序也能成功生成 release 码。
  *
  * @returns {Promise<{fileID: string, envVersion: string}>}
  */
-async function buildWxacode(codeId, envOverride) {
+async function buildWxacode(codeId, envOverride, oldFileID) {
   let envVersion = envOverride
   if (envVersion !== 'release' && envVersion !== 'trial') {
     envVersion = runModeConfig(await getRunMode()).envVersion
@@ -446,10 +460,23 @@ async function buildWxacode(codeId, envOverride) {
     envVersion
   })
 
+  // ⚠️ 路径必须带 envVersion + 时间戳，不能固定为 wxacode/{codeId}.png。
+  // 固定路径下「重生成」是覆盖同一文件：fileID 不变，微信云存储/CDN 很可能
+  // 继续吐旧图 —— 表现就是「明明切了正式版、也重新生成了，扫出来还是体验版」。
+  // 换成新路径 = 新 fileID，彻底绕开缓存。
   const up = await cloud.uploadFile({
-    cloudPath: `wxacode/${codeId}.png`,
+    cloudPath: `wxacode/${codeId}-${envVersion}-${Date.now()}.png`,
     fileContent: wxacodeBuf
   })
+
+  // 旧图已无人引用，顺手删掉省空间（失败无所谓，不影响本次出码）
+  if (oldFileID && oldFileID !== up.fileID) {
+    try {
+      await cloud.deleteFile({ fileList: [oldFileID] })
+    } catch (e) {
+      /* 旧文件可能已被删，忽略 */
+    }
+  }
 
   return { fileID: up.fileID, envVersion }
 }
@@ -1298,7 +1325,8 @@ const actions = {
     }
 
     try {
-      const built = await buildWxacode(codeId)
+      // 传旧 fileID：出图成功后删掉旧图，避免同路径覆盖导致 CDN 吐旧版本
+      const built = await buildWxacode(codeId, undefined, car.wxacodeFileID)
 
       await db.collection(COL_CARS).doc(car._id).update({
         data: {
